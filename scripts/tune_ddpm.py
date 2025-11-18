@@ -14,6 +14,7 @@ parser.add_argument('eval_type', type=str)
 parser.add_argument('eval_model', type=str)
 parser.add_argument('prefix', type=str)
 parser.add_argument('--eval_seeds', action='store_true',  default=False)
+parser.add_argument('--privacy', action='store_true', default=False)
 
 args = parser.parse_args()
 train_size = args.train_size
@@ -23,9 +24,14 @@ assert eval_type in ('merged', 'synthetic')
 prefix = str(args.prefix)
 
 pipeline = f'scripts/pipeline.py'
-base_config_path = f'exp/{ds_name}/config.toml'
-parent_path = Path(f'exp/{ds_name}/')
-exps_path = Path(f'exp/{ds_name}/many-exps/') # temporary dir. maybe will be replaced with tempdiвdr
+if args.privacy:
+    base_config_path = f'privacy_result/{ds_name}/config.toml'
+    parent_path = Path(f'privacy_result/{ds_name}/')
+    exps_path = Path(f'privacy_result/{ds_name}/many-exps/')
+else:
+    base_config_path = f'exp/{ds_name}/config.toml'
+    parent_path = Path(f'exp/{ds_name}/')
+    exps_path = Path(f'exp/{ds_name}/many-exps/') # temporary dir. maybe will be replaced with tempdiвdr
 eval_seeds = f'scripts/eval_seeds.py'
 
 os.makedirs(exps_path, exist_ok=True)
@@ -71,6 +77,27 @@ def objective(trial):
     base_config['diffusion_params']['gaussian_loss_type'] = gaussian_loss_type
     base_config['diffusion_params']['num_timesteps'] = num_timesteps
     # base_config['diffusion_params']['scheduler'] = scheduler
+    
+    # ----- Paul: tune start_privacy_step ------------------------------------
+    
+    if 'start_privacy_step' in base_config['train']['main']:
+        
+        # Determine the maximum value for tuning (max step)
+        max_step = base_config['train']['main']['steps'] 
+        
+        # Suggest a value for start_privacy_step (e.g., between 0 and max_step // 2)
+        start_privacy_step = trial.suggest_int('start_privacy_step', 
+                                                low=0, 
+                                                high=max_step // 2, 
+                                                step=100) # Suggest in increments of 100
+        
+        # Assign the suggested value to the config
+        base_config['train']['main']['start_privacy_step'] = start_privacy_step
+        trial.set_user_attr("start_privacy_step", start_privacy_step)
+    # ELSE: If the parameter is not in the base config, we safely ignore it.
+    
+    # -----------------------------------------------------------------
+    
 
     base_config['parent_dir'] = str(exps_path / f"{trial.number}")
     base_config['eval']['type']['eval_model'] = args.eval_model

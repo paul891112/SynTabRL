@@ -9,6 +9,7 @@ import math
 
 import numpy as np
 from .utils import *
+from .privacy import *  # Including Paul's Implementation
 
 """
 Based in part on: https://github.com/lucidrains/denoising-diffusion-pytorch/blob/5989f4c77eafcdc6be0fb4739f0f277a6dd7f7d8/denoising_diffusion_pytorch/denoising_diffusion_pytorch.py#L281
@@ -81,7 +82,7 @@ class GaussianMultinomialDiffusion(torch.nn.Module):
         if multinomial_loss_type == 'vb_all':
             print('Computing the loss using the bound on _all_ timesteps.'
                   ' This is expensive both in terms of memory and computation.')
-
+        
         self.num_numerical_features = num_numerical_features
         self.num_classes = num_classes # it as a vector [K1, K2, ..., Km]
         self.num_classes_expanded = torch.from_numpy(
@@ -618,16 +619,18 @@ class GaussianMultinomialDiffusion(torch.nn.Module):
 
         loss_multi = torch.zeros((1,)).float()
         loss_gauss = torch.zeros((1,)).float()
+        loss_privacy_num = torch.zeros((1,)).float()
+        loss_privacy_cat = torch.zeros((1,)).float()
         if x_cat.shape[1] > 0:
             loss_multi = self._multinomial_loss(model_out_cat, log_x_cat, log_x_cat_t, t, pt, out_dict) / len(self.num_classes)
+            # Get privacy loss ratio for categorical part, pass input, model output, number of categorical features
+            loss_privacy_cat = categorical_privacy_loss(log_x_cat, model_out_cat, len(self.num_classes))
         
         if x_num.shape[1] > 0:
             loss_gauss = self._gaussian_loss(model_out_num, x_num, x_num_t, t, noise)
+            loss_privacy_num = nndr_loss(x_num, model_out_num)
 
-        # loss_multi = torch.where(out_dict['y'] == 1, loss_multi, 2 * loss_multi)
-        # loss_gauss = torch.where(out_dict['y'] == 1, loss_gauss, 2 * loss_gauss)
-
-        return loss_multi.mean(), loss_gauss.mean()
+        return loss_multi.mean(), loss_gauss.mean(), loss_privacy_cat.mean(), loss_privacy_num.mean()
     
     @torch.no_grad()
     def mixed_elbo(self, x0, out_dict):

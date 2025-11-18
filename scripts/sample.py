@@ -131,6 +131,8 @@ def sample(
         if T_dict['cat_encoding'] == 'one-hot':
             X_gen[:, num_numerical_features:] = to_good_ohe(D.cat_transform.steps[0][1], X_num_[:, num_numerical_features:])
         X_cat = D.cat_transform.inverse_transform(X_gen[:, num_numerical_features:])
+    else:
+        X_cat = None
 
     if num_numerical_features_ != 0:
         # _, normalize = lib.normalize({'train' : X_num_real}, T_dict['normalization'], T_dict['seed'], True)
@@ -157,3 +159,5 @@ def sample(
     if num_numerical_features < X_gen.shape[1]:
         np.save(os.path.join(parent_dir, 'X_cat_train'), X_cat)
     np.save(os.path.join(parent_dir, 'y_train'), y_gen)
+    
+    return X_num, X_cat, y_gen

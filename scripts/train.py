@@ -8,6 +8,20 @@ from utils_train import get_model, make_dataset, update_ema
 import lib
 import pandas as pd
 
+class DatasetInfo:
+    """
+    Paul Custom Class for information passing.
+    Holds dataset information such as category sizes and number of numerical features.
+    """
+    def __init__(self, k, trainer):
+        self._K = k
+        self._num_numerical_features = trainer.diffusion._num_numerical_features
+    
+    def get_category_sizes(self):
+        return self._K
+    def get_num_numerical_features(self):
+        return self._num_numerical_features
+
 class Trainer:
     def __init__(self, diffusion, train_iter, lr, weight_decay, steps, device=torch.device('cuda:1')):
         self.diffusion = diffusion
@@ -15,7 +29,7 @@ class Trainer:
         for param in self.ema_model.parameters():
             param.detach_()
 
-        self.train_iter = train_iter
+        self.train_iter = train_iter  # called with train_loader in train()
         self.steps = steps
         self.init_lr = lr
         self.optimizer = torch.optim.AdamW(self.diffusion.parameters(), lr=lr, weight_decay=weight_decay)
@@ -32,52 +46,140 @@ class Trainer:
             param_group["lr"] = lr
 
     def _run_step(self, x, out_dict):
+        """
+        One step of learning: comute loss, update weights.
+        Original implementation, no privacy loss term
+
+        Args:
+            x (_type_): _description_
+            out_dict (_type_): yield from FastTensorDataLoader, in lib/data.py
+        Returns:
+            _type_: _description_
+        """
         x = x.to(self.device)
         for k in out_dict:
             out_dict[k] = out_dict[k].long().to(self.device)
         self.optimizer.zero_grad()
-        loss_multi, loss_gauss = self.diffusion.mixed_loss(x, out_dict)
+        
+        loss_multi, loss_gauss, privacy_multi, privacy_gauss = self.diffusion.mixed_loss(x, out_dict)
+        
         loss = loss_multi + loss_gauss
         loss.backward()
         self.optimizer.step()
 
         return loss_multi, loss_gauss
+    
+    def _run_step_privacy(self, x, out_dict):
+        """
+        Incorporates privacy term to loss functions.\n
+        Use relative distance metric (normalized ratio [0, 1])\n
+        Loss function = (1 + ratio) * loss, aim for ratio = 1 so minimize 1-ratio\n
 
-    def run_loop(self):
+        Args:
+            x (_type_): _description_
+            out_dict (_type_): yield from FastTensorDataLoader, in lib/data.py
+        Returns:
+            _type_: _description_
+        """
+        x = x.to(self.device)
+        for k in out_dict:
+            out_dict[k] = out_dict[k].long().to(self.device)
+        self.optimizer.zero_grad()
+        
+        ### Compute losses: To modifys
+        
+        # mixed_loss() in gaussian_multinomial_diffusion.py
+        # privacy_multi: Normalized distance ratio for categorical part [0,1]
+        # privacy_gauss: NNDR ratio
+        loss_multi, loss_gauss, privacy_multi, privacy_gauss = self.diffusion.mixed_loss(x, out_dict)
+        
+        loss_multi = loss_multi * (2 - privacy_multi)  # aim for privacy ratio = 1
+        loss_gauss = loss_gauss * (2 - privacy_gauss)  # aim for privacy ratio = 1
+        
+        loss = loss_multi + loss_gauss  #aim for privacy ratio = 1
+        loss.backward()
+        self.optimizer.step()
+
+        return loss_multi, loss_gauss
+
+    def run_loop(self, start_privacy_step):
         step = 0
         curr_loss_multi = 0.0
         curr_loss_gauss = 0.0
 
         curr_count = 0
-        while step < self.steps:
-            x, out_dict = next(self.train_iter)
-            out_dict = {'y': out_dict}
-            batch_loss_multi, batch_loss_gauss = self._run_step(x, out_dict)
+        if start_privacy_step < 0:
+            print("Never use privacy term during training.")
+            # Never incorporate privacy term
+            while step < self.steps:
+                x, out_dict = next(self.train_iter)
+                out_dict = {'y': out_dict}
+                
+                # Always no privacy term
+                batch_loss_multi, batch_loss_gauss = self._run_step(x, out_dict)
 
-            self._anneal_lr(step)
+                self._anneal_lr(step)
 
-            curr_count += len(x)
-            curr_loss_multi += batch_loss_multi.item() * len(x)
-            curr_loss_gauss += batch_loss_gauss.item() * len(x)
+                curr_count += len(x)
+                curr_loss_multi += batch_loss_multi.item() * len(x)
+                curr_loss_gauss += batch_loss_gauss.item() * len(x)
 
-            if (step + 1) % self.log_every == 0:
-                mloss = np.around(curr_loss_multi / curr_count, 4)
-                gloss = np.around(curr_loss_gauss / curr_count, 4)
-                if (step + 1) % self.print_every == 0:
-                    print(f'Step {(step + 1)}/{self.steps} MLoss: {mloss} GLoss: {gloss} Sum: {mloss + gloss}')
-                self.loss_history.loc[len(self.loss_history)] =[step + 1, mloss, gloss, mloss + gloss]
-                curr_count = 0
-                curr_loss_gauss = 0.0
-                curr_loss_multi = 0.0
+                if (step + 1) % self.log_every == 0:
+                    mloss = np.around(curr_loss_multi / curr_count, 4)
+                    gloss = np.around(curr_loss_gauss / curr_count, 4)
+                    if (step + 1) % self.print_every == 0:
+                        print(f'Step {(step + 1)}/{self.steps} MLoss: {mloss} GLoss: {gloss} Sum: {mloss + gloss}')
+                    self.loss_history.loc[len(self.loss_history)] =[step + 1, mloss, gloss, mloss + gloss]
+                    curr_count = 0
+                    curr_loss_gauss = 0.0
+                    curr_loss_multi = 0.0
 
-            update_ema(self.ema_model.parameters(), self.diffusion._denoise_fn.parameters())
+                update_ema(self.ema_model.parameters(), self.diffusion._denoise_fn.parameters())
+                step += 1
 
-            step += 1
+        
+        else:    
+            print(f"Incorporate privacy term after step {start_privacy_step}.")
+            while step < self.steps:
+                x, out_dict = next(self.train_iter)
+                out_dict = {'y': out_dict}
+                
+                
+                # Incorporates privacy term after half of training steps
+                if step < start_privacy_step:
+                    batch_loss_multi, batch_loss_gauss = self._run_step(x, out_dict)
+                else:
+                    batch_loss_multi, batch_loss_gauss= self._run_step_privacy(x, out_dict)
+                
+                
+                # Always incorporates privacy term
+                # batch_loss_multi, batch_loss_gauss = self._run_step_privacy(x, out_dict)
+
+                self._anneal_lr(step)
+
+                curr_count += len(x)
+                curr_loss_multi += batch_loss_multi.item() * len(x)
+                curr_loss_gauss += batch_loss_gauss.item() * len(x)
+
+                if (step + 1) % self.log_every == 0:
+                    mloss = np.around(curr_loss_multi / curr_count, 4)
+                    gloss = np.around(curr_loss_gauss / curr_count, 4)
+                    if (step + 1) % self.print_every == 0:
+                        print(f'Step {(step + 1)}/{self.steps} MLoss: {mloss} GLoss: {gloss} Sum: {mloss + gloss}')
+                    self.loss_history.loc[len(self.loss_history)] =[step + 1, mloss, gloss, mloss + gloss]
+                    curr_count = 0
+                    curr_loss_gauss = 0.0
+                    curr_loss_multi = 0.0
+
+                update_ema(self.ema_model.parameters(), self.diffusion._denoise_fn.parameters())
+
+                step += 1
 
 def train(
     parent_dir,
     real_data_path = 'data/higgs-small',
     steps = 1000,
+    start_privacy_step = -1,
     lr = 0.002,
     weight_decay = 1e-4,
     batch_size = 1024,
@@ -90,7 +192,8 @@ def train(
     num_numerical_features = 0,
     device = torch.device('cuda:1'),
     seed = 0,
-    change_val = False
+    change_val = False,
+    continue_training = False
 ):
     real_data_path = os.path.normpath(real_data_path)
     parent_dir = os.path.normpath(parent_dir)
@@ -110,7 +213,6 @@ def train(
     K = np.array(dataset.get_category_sizes('train'))
     if len(K) == 0 or T_dict['cat_encoding'] == 'one-hot':
         K = np.array([0])
-    print(K)
 
     num_numerical_features = dataset.X_num['train'].shape[1] if dataset.X_num is not None else 0
     d_in = np.sum(K) + num_numerical_features
@@ -124,6 +226,8 @@ def train(
         num_numerical_features,
         category_sizes=dataset.get_category_sizes('train')
     )
+    if continue_training:
+        model.load_state_dict(torch.load(os.path.join(parent_dir, 'model.pt')))
     model.to(device)
 
     # train_loader = lib.prepare_beton_loader(dataset, split='train', batch_size=batch_size)
@@ -151,8 +255,26 @@ def train(
         steps=steps,
         device=device
     )
-    trainer.run_loop()
+    trainer.run_loop(start_privacy_step=start_privacy_step)
 
     trainer.loss_history.to_csv(os.path.join(parent_dir, 'loss.csv'), index=False)
     torch.save(diffusion._denoise_fn.state_dict(), os.path.join(parent_dir, 'model.pt'))
     torch.save(trainer.ema_model.state_dict(), os.path.join(parent_dir, 'model_ema.pt'))
+    
+    info_json_path = os.path.join(parent_dir, 'DatasetInfo.json')
+
+
+    # C. Update the metadata dictionary with new information
+    # Assuming you want to add the final loss and the total steps run
+    new_info = {
+        'task_type': dataset.task_type.value,  # 'binclass' or 'multiclass' or 'regression'
+        'n_classes': dataset.n_classes, 
+        'n_num_features': dataset.n_num_features,
+        'n_cat_features': dataset.n_cat_features,
+        'training_completed': True,
+        'category_sizes': K.tolist(),
+        # Add any other relevant metrics or parameters here
+    }
+
+    # D. Save the updated dictionary back to the file (overwriting)
+    lib.dump_json(new_info, info_json_path)

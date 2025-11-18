@@ -4,6 +4,7 @@ real_data_path = "data/abalone/"
 model_type = "mlp"
 num_numerical_features = 7
 device = "cuda:0"
+evaluation_file = "eval.txt"
 
 [model_params]
 is_y_cond = false
@@ -23,6 +24,7 @@ gaussian_loss_type = "mse"
 
 [train.main]
 steps = 30000
+start_privacy_step = 0
 lr = 0.00027761965839603165
 weight_decay = 0.0
 batch_size = 4096
