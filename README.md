@@ -1,5 +1,5 @@
 # TabDDPM: Modelling Tabular Data with Diffusion Models
-This is the official code for our paper "TabDDPM: Modelling Tabular Data with Diffusion Models" ([paper](https://arxiv.org/abs/2209.15421))
+This is an adaptation from the official TabDDPM project "TabDDPM: Modelling Tabular Data with Diffusion Models" ([paper](https://arxiv.org/abs/2209.15421)). This project implements a RL agent to improve model output on privacy metrics. 
 
 <!-- ## Results
 You can view all the results and build your own tables with this [notebook](notebooks/Reports.ipynb). -->
