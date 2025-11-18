@@ -1,4 +1,4 @@
-# TabDDPM: Modelling Tabular Data with Diffusion Models
+# SynTabRL: TabDDPM with RL Agent for Privacy-Aware Synthetic Tabular Data Generation
 This is an adaptation from the official TabDDPM project "TabDDPM: Modelling Tabular Data with Diffusion Models" ([paper](https://arxiv.org/abs/2209.15421)). This project implements a RL agent to improve model output on privacy metrics. 
 
 <!-- ## Results
