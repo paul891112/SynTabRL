@@ -1,0 +1,16 @@
+Similarity and Privacy evaluation
+wasserstein_distance_numerical: 0.010048664002908797
+js_similarity_categorical: 0.991242350925052
+correlation_pearson: 0.9900974746069445
+correlation_spearman: 0.988961795435667
+dcr_all_euclidean: 0.19757090750413772
+nndr_euclidean: 0.7743038001178629
+nndr_cosine: 0.6321047616711165
+gower_distance: 0.34802242548367934
+dcr_gower: 0.0011596513343865768
+
+Absolute Difference of Basic Statistics:
+mean: 0.008743407068231577
+median: 0.0416845844256095
+var: 0.0019865573158531283
+Statistics computed column-wise, then average is taken.

@@ -589,7 +589,7 @@ class GaussianMultinomialDiffusion(torch.nn.Module):
 
             return -loss
     
-    def mixed_loss(self, x, out_dict):
+    def mixed_loss(self, x, out_dict, privacy_metric="nndr"):
         b = x.shape[0]
         device = x.device
         t, pt = self.sample_time(b, device, 'uniform')
@@ -629,6 +629,10 @@ class GaussianMultinomialDiffusion(torch.nn.Module):
         if x_num.shape[1] > 0:
             loss_gauss = self._gaussian_loss(model_out_num, x_num, x_num_t, t, noise)
             loss_privacy_num = nndr_loss(x_num, model_out_num)
+            
+            
+        if privacy_metric == "gower":
+            return loss_multi.mean(), loss_gauss.mean(), compute_gower_cat(log_x_cat, model_out_cat, len(self.num_classes), self.num_classes), compute_gower_num(x_num, model_out_num).mean()
 
         return loss_multi.mean(), loss_gauss.mean(), loss_privacy_cat.mean(), loss_privacy_num.mean()
     

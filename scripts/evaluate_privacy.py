@@ -12,7 +12,7 @@ import numpy as np
 import torch
 from sklearn.preprocessing import MinMaxScaler, OneHotEncoder
 from scipy.stats import wasserstein_distance
-
+import gc
 
 
 def load_data(real_path, fake_path):
@@ -65,10 +65,11 @@ def load_data(real_path, fake_path):
     
     return X_real, X_fake, target_size, task_type
 
-def compute_gowers_distance(original: np.ndarray, synthetic: np.ndarray, n_num_features: int, task_type: str, category_sizes: list) -> float:
+def compute_gowers_distance(original: np.ndarray, synthetic: np.ndarray, n_num_features: int, task_type: str, category_sizes: list) -> np.ndarray:
     """
     Computes Gower's distance between original and synthetic datasets.\n
-    The average of every pairwise Gower's distance is returned.
+    The average of every pairwise Gower's distance is returned.\n
+    Samples 2000 synthetic records for efficiency.
 
     Parameters:
     - original: np.ndarray; The original dataset (samples x features).
@@ -77,10 +78,14 @@ def compute_gowers_distance(original: np.ndarray, synthetic: np.ndarray, n_num_f
     - category_sizes: list; List containing the sizes of each categorical feature.
 
     Returns:
-    - float; The average Gower's distance.
+    - numpy.ndarray; The Gower distance matrix of every real-synthetic pair.
     """
     
-    N_o, N_s = original.shape[0], synthetic.shape[0]
+    
+    N_s = synthetic.shape[0]
+    sample_indices = np.random.choice(N_s, size=2000, replace=False)
+    synthetic_sample = synthetic[sample_indices]
+    N_o, N_s = original.shape[0], synthetic_sample.shape[0]
     if task_type == 'regression':
             n_num_features += 1  # Include target variable
             category_sizes = category_sizes[:-1]  # Exclude target variable
@@ -94,7 +99,7 @@ def compute_gowers_distance(original: np.ndarray, synthetic: np.ndarray, n_num_f
     if n_num_features > 0:
         # Extract numerical features
         O_num = original[:, :n_num_features]
-        S_num = synthetic[:, :n_num_features]
+        S_num = synthetic_sample[:, :n_num_features]
         
         # Broadcasting: O_num[:, None, :] subtracts S_num[None, :, :]
         # O_num is (N_o, 1, n_num), S_num is (1, N_s, n_num) -> Result is (N_o, N_s, n_num)
@@ -115,7 +120,7 @@ def compute_gowers_distance(original: np.ndarray, synthetic: np.ndarray, n_num_f
         for size in category_sizes:
             # Extract one-hot-encoded columns for the current feature
             O_cat_k = original[:, runner : runner + size]
-            S_cat_k = synthetic[:, runner : runner + size]
+            S_cat_k = synthetic_sample[:, runner : runner + size]
             
             # Broadcasting comparison (N_o x N_s x size)
             O_cat_k_b = O_cat_k[:, None, :]
@@ -131,11 +136,10 @@ def compute_gowers_distance(original: np.ndarray, synthetic: np.ndarray, n_num_f
             runner += size
 
     # --- 3. Final Gower Distance Calculation ---
-    # G_ij = (Sum of D_num) + (Sum of D_cat) / Total Features
     G_matrix = (D_num_sum + D_cat_sum) / total_features
     
-    # Return the average of every pairwise Gower's distance
-    return np.mean(G_matrix)
+    # Return the pairwise Gower's distance matrix
+    return G_matrix
             
 
 def compute_dcr(
@@ -176,7 +180,7 @@ def compute_dcr(
     
     n_features = original_data.shape[1]
     if task_type:  # Numerical + Categorical features
-        assert n_features ==  num_numerical_features + sum(category_sizes), "Category sizes do not match the number of categorical features."
+        assert n_features ==  num_numerical_features + sum(category_sizes), f"Category sizes do not match the number of categorical features: n_features={n_features}, num_numerical_features={num_numerical_features}, sum(category_sizes)={sum(category_sizes)}"
         
         if task_type == 'regression':
             num_numerical_features += 1  # Include target variable
@@ -191,7 +195,6 @@ def compute_dcr(
             mask[start_idx:start_idx + size] = 1.0 / size
             start_idx += size
         feature_weights[num_numerical_features:] = mask
-        print(f"In DCR, Mask with category_sizes: {mask}.")
     else:  # only numerical features
         feature_weights = np.ones(n_features)
         
@@ -263,7 +266,6 @@ def compute_nndr(
             mask[start_idx:start_idx + size] = 1.0 / size
             start_idx += size
         feature_weights[num_numerical_features:] = mask
-        print(f"In NNDR, Mask with category_sizes: {mask}.")
         feature_weights = feature_weights
 
     # --- Apply Feature Weights ---
@@ -339,10 +341,7 @@ def correlation_similarity(
         # between features (columns), so we use the transpose if needed.
         # Assuming features are columns in the input arrays:
         orig_corr = np.corrcoef(original_data, rowvar=False)
-        print("Synthetic correlation matrix calculation.")
         syn_corr = np.corrcoef(synthetic_data, rowvar=False)
-        print(syn_corr)
-        print("Finished correlation matrix calculation.")
 
     elif method == CorrelationMethod.SPEARMAN:
         # Spearman correlation is Pearson correlation on the ranked data.
@@ -558,20 +557,40 @@ def evaluate_generation(original: np.ndarray, synthetic: np.ndarray, num_numeric
     stats["correlation_spearman"] = correlation_similarity(np.asarray(original), np.asarray(synthetic), CorrelationMethod.SPEARMAN)
     print("Finished computing correlation similarities.")
     stats["dcr_all_euclidean"] = compute_dcr(np.asarray(original), np.asarray(synthetic), num_numerical_features=num_numerical_features, category_sizes=category_sizes, task_type=task_type, distance_metric='euclidean')
-    print("Finished computing DCR all.")
-    stats["dcr_numerical_euclidean"] = compute_dcr(np.asarray(original[:,:num_numerical_features]), np.asarray(synthetic[:,:num_numerical_features]), num_numerical_features=num_numerical_features, category_sizes=category_sizes, task_type=task_type, distance_metric='euclidean')
-    print("Finished computing DCR numerical.")
-    stats["dcr_categorical_hamming"] = compute_dcr(np.asarray(original[:,num_numerical_features:]), np.asarray(synthetic[:,num_numerical_features:]), num_numerical_features=num_numerical_features, category_sizes=category_sizes, task_type=task_type, distance_metric='hamming')
-    print("Finished computing DCR categorical.")
+    print("Finished computing DCR.")
     stats["nndr_euclidean"] = compute_nndr(np.asarray(original), np.asarray(synthetic), num_numerical_features=num_numerical_features, category_sizes=category_sizes, task_type=task_type, distance_metric='euclidean')
-    print("Finished computing NNDR.")
     stats["nndr_cosine"] = compute_nndr(np.asarray(original), np.asarray(synthetic), distance_metric='cosine')
+    print("Finished computing NNDR.")
+
+    gc.collect()
+    
     print("Starting to compute Gower's distance.")
-    stats["gowers_distance"] = compute_gowers_distance(np.asarray(original), np.asarray(synthetic), num_numerical_features, task_type, category_sizes)
+    gower_matrix= compute_gowers_distance(np.asarray(original), np.asarray(synthetic), num_numerical_features, task_type, category_sizes)
+    stats["gower_distance"] = np.mean(gower_matrix)
+    stats["dcr_gower"] = np.min(gower_matrix)
     print("Finished computing Gower's distance.")
     
     return stats, scores
 
+def evaluate_privacy_main(args):
+    raw_config = lib.load_config(args.config)
+    N = raw_config['num_numerical_features']
+    x_real, x_fake, target_size, task_type = load_data(raw_config['real_data_path'], raw_config['parent_dir'])
+    dataset_info = lib.load_json(os.path.join(raw_config['parent_dir'], 'DatasetInfo.json'))
+    dataset_info["category_sizes"].append(target_size)
+    print(f"Dataset_info: {dataset_info}\nnum_numerical_features: {N}\ntask_type: {task_type}\ncategory_sizes: {dataset_info['category_sizes']}")
+    print(f"x_real shape: {x_real.shape}, x_fake shape: {x_fake.shape}")
+    stats, scores = evaluate_generation(x_real, x_fake, N, dataset_info["category_sizes"], task_type=task_type)
+    
+    with open(os.path.join(raw_config['parent_dir'], raw_config['evaluation_file']), 'w') as file:
+        
+        file.write(f"Similarity and Privacy evaluation\n")
+        for key, value in stats.items():
+            file.write(f"{key}: {value}\n")
+        file.write(f"\nAbsolute Difference of Basic Statistics:\n")
+        for key, value in scores.items():
+            file.write(f"{key}: {value}\n")
+        file.write("Statistics computed column-wise, then average is taken.\n")    
 
 def main():
     
@@ -584,22 +603,8 @@ def main():
     parser.add_argument('--change_val', action='store_true',  default=False)
 
     args = parser.parse_args()
-    raw_config = lib.load_config(args.config)
-    N = raw_config['num_numerical_features']
-    x_real, x_fake, target_size, task_type = load_data(raw_config['real_data_path'], raw_config['parent_dir'])
-    dataset_info = lib.load_json(os.path.join(raw_config['parent_dir'], 'DatasetInfo.json'))
-    dataset_info["category_sizes"].append(target_size)
-    stats, scores = evaluate_generation(x_real, x_fake, N, dataset_info["category_sizes"], task_type=task_type)
+    evaluate_privacy_main(args)
     
-    with open(os.path.join(raw_config['parent_dir'], raw_config['evaluation_file']), 'w') as file:
-        
-        file.write(f"Similarity and Privacy evaluation\n")
-        for key, value in stats.items():
-            file.write(f"{key}: {value}\n")
-        file.write(f"\nAbsolute Difference of Basic Statistics:\n")
-        for key, value in scores.items():
-            file.write(f"{key}: {value}\n")
-        file.write("Statistics computed column-wise, then average is taken.\n")    
         
     
 if __name__ == '__main__':

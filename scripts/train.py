@@ -1,5 +1,6 @@
 from copy import deepcopy
 import torch
+from torch.distributions.normal import Normal
 import os
 import numpy as np
 import zero
@@ -7,6 +8,10 @@ from tab_ddpm import GaussianMultinomialDiffusion
 from utils_train import get_model, make_dataset, update_ema
 import lib
 import pandas as pd
+
+PRIVACY_METRIC = {"nndr", "gower"}
+GOWER_STD = 0.2
+NOISE_STD = 0.0001  # Standard deviation of noise added to EMA model parameters
 
 class DatasetInfo:
     """
@@ -69,7 +74,7 @@ class Trainer:
 
         return loss_multi, loss_gauss
     
-    def _run_step_privacy(self, x, out_dict):
+    def _run_step_privacy(self, x, out_dict, privacy_metric='nndr'):
         """
         Incorporates privacy term to loss functions.\n
         Use relative distance metric (normalized ratio [0, 1])\n
@@ -84,28 +89,56 @@ class Trainer:
         x = x.to(self.device)
         for k in out_dict:
             out_dict[k] = out_dict[k].long().to(self.device)
-        self.optimizer.zero_grad()
+            
+        noise_dist = Normal(loc=0.0, scale=NOISE_STD)    
+        with torch.no_grad(): 
+            for param in self.ema_model.parameters():
+                # Only apply to parameters that are meant to be trained
+                if param.requires_grad:
+                    # 3. Sample noise tensor with the exact shape of the parameter
+                    noise = noise_dist.sample(param.shape).to(self.device)
+                    
+                    # 4. Inject the noise by adding it to the current parameter value
+                    param.add_(noise)    
         
-        ### Compute losses: To modifys
+        self.optimizer.zero_grad()
         
         # mixed_loss() in gaussian_multinomial_diffusion.py
         # privacy_multi: Normalized distance ratio for categorical part [0,1]
         # privacy_gauss: NNDR ratio
-        loss_multi, loss_gauss, privacy_multi, privacy_gauss = self.diffusion.mixed_loss(x, out_dict)
+        loss_multi, loss_gauss, privacy_multi, privacy_gauss = self.diffusion.mixed_loss(x, out_dict, privacy_metric=privacy_metric)
         
-        loss_multi = loss_multi * (2 - privacy_multi)  # aim for privacy ratio = 1
-        loss_gauss = loss_gauss * (2 - privacy_gauss)  # aim for privacy ratio = 1
         
-        loss = loss_multi + loss_gauss  #aim for privacy ratio = 1
-        loss.backward()
-        self.optimizer.step()
+        # Depending on privacy metric, modify loss functions
+        if privacy_metric not in PRIVACY_METRIC:
+            raise ValueError(f"Unknown privacy metric: {privacy_metric}. Supported metrics: {PRIVACY_METRIC}")
+        
+        if privacy_metric == 'gower':
+            # Gower distance, 1 = highest dissimilarity, max privacy
+            # ignore conventional losses and only focus on privacy term
+            loss_multi = loss_multi * (2 - privacy_multi)  # aim for privacy ratio = 1
+            loss_gauss = loss_gauss * (2 - privacy_gauss)  # aim for privacy ratio = 1
+            
+            loss = (loss_multi + loss_gauss) * torch.normal(mean=1.0, std=GOWER_STD, size=(1,), device=self.device)  #aim for privacy ratio = 1
+            loss.backward()
+            self.optimizer.step()            
+        
+        else:
+            loss_multi = loss_multi * (1 + privacy_multi)  # aim for privacy ratio = 0
+            loss_gauss = loss_gauss * (1 + privacy_gauss)  # aim for privacy ratio = 0
+            
+            loss = loss_multi + loss_gauss  #aim for privacy ratio = 1
+            loss.backward()
+            self.optimizer.step()
 
         return loss_multi, loss_gauss
 
-    def run_loop(self, start_privacy_step):
+    def run_loop(self, start_privacy_step, privacy_metric):
         step = 0
         curr_loss_multi = 0.0
         curr_loss_gauss = 0.0
+        
+        
 
         curr_count = 0
         if start_privacy_step < 0:
@@ -140,20 +173,33 @@ class Trainer:
         
         else:    
             print(f"Incorporate privacy term after step {start_privacy_step}.")
+            
+            # Initial noise injection to EMA model
+            if privacy_metric == 'gower':
+                noise_dist = Normal(loc=0.0, scale=NOISE_STD)
+                print(f"Adding randomness to model weights, noise std: {NOISE_STD}")
+        
+                # Iterate over all parameters (weights and biases) in the model
+                with torch.no_grad(): # Ensure this operation is outside the gradient calculation
+                    for param in self.ema_model.parameters():
+                        # Only apply to parameters that are meant to be trained
+                        if param.requires_grad:
+                            # Sample noise tensor with the exact shape of the parameter
+                            noise = noise_dist.sample(param.shape).to(self.device)
+                            param.add_(noise)
+             # ----- End of noise -----
+            
             while step < self.steps:
                 x, out_dict = next(self.train_iter)
                 out_dict = {'y': out_dict}
                 
                 
-                # Incorporates privacy term after half of training steps
+                # Incorporates privacy term after certain training step
                 if step < start_privacy_step:
                     batch_loss_multi, batch_loss_gauss = self._run_step(x, out_dict)
                 else:
-                    batch_loss_multi, batch_loss_gauss= self._run_step_privacy(x, out_dict)
-                
-                
-                # Always incorporates privacy term
-                # batch_loss_multi, batch_loss_gauss = self._run_step_privacy(x, out_dict)
+                    batch_loss_multi, batch_loss_gauss= self._run_step_privacy(x, out_dict, privacy_metric=privacy_metric)
+
 
                 self._anneal_lr(step)
 
@@ -173,7 +219,8 @@ class Trainer:
 
                 update_ema(self.ema_model.parameters(), self.diffusion._denoise_fn.parameters())
 
-                step += 1
+                step += 1      
+        
 
 def train(
     parent_dir,
@@ -193,7 +240,8 @@ def train(
     device = torch.device('cuda:1'),
     seed = 0,
     change_val = False,
-    continue_training = False
+    continue_training = False,
+    privacy_metric = 'nndr'
 ):
     real_data_path = os.path.normpath(real_data_path)
     parent_dir = os.path.normpath(parent_dir)
@@ -255,7 +303,8 @@ def train(
         steps=steps,
         device=device
     )
-    trainer.run_loop(start_privacy_step=start_privacy_step)
+
+    trainer.run_loop(start_privacy_step=start_privacy_step, privacy_metric=privacy_metric)
 
     trainer.loss_history.to_csv(os.path.join(parent_dir, 'loss.csv'), index=False)
     torch.save(diffusion._denoise_fn.state_dict(), os.path.join(parent_dir, 'model.pt'))

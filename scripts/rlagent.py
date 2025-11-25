@@ -3,12 +3,13 @@ import shutil
 import os
 import argparse
 from typing import Union, Dict
+from itertools import cycle
 from train import train, DatasetInfo
 from sample import sample
 from eval_catboost import train_catboost
 from eval_mlp import train_mlp
 from eval_simple import train_simple
-from evaluate_privacy import compute_dcr, compute_nndr, compute_gowers_distance
+from evaluate_privacy import evaluate_generation, compute_dcr, compute_nndr, compute_gowers_distance
 import pandas as pd
 import matplotlib.pyplot as plt
 import zero
@@ -19,12 +20,14 @@ import time
 from sklearn.preprocessing import MinMaxScaler, OneHotEncoder
 from scipy.stats import wasserstein_distance
 from enum import Enum
+import time
+import gc
 
 
 PRIVACY_CONFIG_DICT = {
-    "DCR": 0.4,
-    "NNDR": 0.4,
-    "Gower": 0.4 
+    "dcr": 0.3,  # the higher, the better privacy, but the lower fidelity
+    "nndr": 0.85,  # the lower, the better privacy
+    "gower": 0.3  # the higher, the better privacy
                           }
 
 
@@ -42,8 +45,10 @@ def save_file(parent_dir, config_path):
 
 class State(Enum):
     """Represents the privacy state of the RL agent based on evaluation metrics."""
-    LOW = 0,
-    HIGH = 1
+    HIGH = 0,
+    LOW_DCR = "dcr",
+    LOW_NNDR = "nndr",
+    LOW_GOWER = "gower"
     
 class Action(Enum):
     Conventional = "Model in high privacy state, train with conventional loss function",
@@ -51,7 +56,7 @@ class Action(Enum):
 
 
 class RLAgent:
-    def __init__(self, name="", rounds=20, steps_per_round=1000, evaluation_samples=2000, args=None, raw_config=None, device=None):
+    def __init__(self, name="", steps_per_round=1000, evaluation_samples=2000, args=None, raw_config=None, device=None):
         """
         RL Agent for training a diffusion model with privacy considerations. One agent for one dataset.
         Args:
@@ -61,22 +66,29 @@ class RLAgent:
             steps_per_round (int, optional): Number of training steps per round. Defaults to 1000.
         """
         self.name = name
-        self.rounds = rounds
         self.steps_per_round = steps_per_round
         self.evaluation_samples = evaluation_samples
-        self.privacy_threshold = PRIVACY_CONFIG_DICT  # Example threshold for privacy metric
+        self.__state = State.HIGH
+        self.privacy_cycle = cycle(PRIVACY_CONFIG_DICT.keys())
 
         self.args = args
         self.raw_config = raw_config
         self.device = device
+        self.privacy_metric = self.raw_config['privacy_metric'] if ('privacy_metric' in self.raw_config and self.raw_config['privacy_metric'] in PRIVACY_CONFIG_DICT.keys()) else 'nndr'  # 'nndr' or 'gower'
+        self.privacy_threshold = self.load_privacy_config()
+        self.rounds = int(self.raw_config['train']['main']['steps'] / self.steps_per_round)
             
         self.real_data, self.target_size, self.dataset_info, self.mm, self.ohe = self.load_real_data(self.raw_config['real_data_path'])
         self.real_data = np.asarray(self.real_data)
         self.dataset_info.update(lib.load_json(os.path.join(self.raw_config['parent_dir'], 'DatasetInfo.json')))
         self.dataset_info['category_sizes'].append(self.target_size)
-        print(f"RL agent {self.name} initialized to train for dataset {self.dataset_info['name']} with {self.rounds} rounds, each with {self.steps_per_round} steps.")
+        print(f"RL agent {self.name} initialized to train for dataset {self.dataset_info['name']} with {self.rounds} rounds, each with {self.steps_per_round} steps.\nUse privacy metric: {self.privacy_metric}.")
         self.category_sizes = self.dataset_info.get('category_sizes')
         self.task_type = self.dataset_info.get('task_type')
+    
+    
+    def get_state(self):
+        return self.__state
     
         
     def load_real_data(self, real_path):
@@ -149,6 +161,27 @@ class RLAgent:
             
         return X_fake
     
+    
+    def load_privacy_config(self):
+        """
+        Loads privacy configuration from PRIVACY_CONFIG_DICT based on the selected privacy metric.
+        
+        Returns:
+            float: The privacy threshold for the selected metric.
+        """
+        if ('privacy' in self.raw_config and 'config' in self.raw_config['privacy']):
+            privacy_config = {}
+            for key in PRIVACY_CONFIG_DICT.keys():
+                if key in self.raw_config['privacy']['config']:
+                    privacy_config[key] = self.raw_config['privacy']['config'][key]
+                else:
+                    privacy_config[key] = PRIVACY_CONFIG_DICT[key]
+            return privacy_config           
+        
+        else:
+            return PRIVACY_CONFIG_DICT
+        
+    
     def pretrain(self, steps=None):
         if steps:
             train(
@@ -191,15 +224,34 @@ class RLAgent:
     def run_algorithm(self):
         
         self.pretrain()
-        state = State.HIGH
         counter = 0
         for _ in range(self.rounds):
             counter += 1
             print(f"=== RL Agent Round {counter} ===")
-            print(f"State: {state.name}")
-            self.train_model(state)
+            print(f"State: {self.get_state().name}")
+            self.train_model()
             X_num, X_cat, y_gen = self.generate_samples()
-            state = self.evaluate_state(X_num, X_cat, y_gen)
+            self.__state = self.evaluate_state(X_num, X_cat, y_gen) 
+        # Generate evaluation.txt
+        self.evaluate_generation()
+        
+        
+    def evaluate_generation(self):
+        """
+        Generates final evaluation of the trained model using all available samples.
+        """
+        X_num, X_cat, y_gen = self.generate_samples(num_samples=10000)
+        synthetic_data = self.load_fake_data(X_num, X_cat, y_gen)
+        stats, scores = evaluate_generation(synthetic=synthetic_data, original=self.real_data, num_numerical_features=self.raw_config['num_numerical_features'], category_sizes=self.category_sizes, task_type=self.task_type)
+        with open(os.path.join(self.raw_config['parent_dir'], self.raw_config['evaluation_file']), 'w') as file:
+            
+            file.write(f"Similarity and Privacy evaluation\n")
+            for key, value in stats.items():
+                file.write(f"{key}: {value}\n")
+            file.write(f"\nAbsolute Difference of Basic Statistics:\n")
+            for key, value in scores.items():
+                file.write(f"{key}: {value}\n")
+            file.write("Statistics computed column-wise, then average is taken.\n")  
         
         
     def generate_samples(self, num_samples=2000):
@@ -221,6 +273,7 @@ class RLAgent:
             change_val=self.args.change_val
         )
 
+
     def evaluate_state(self, X_num, X_cat, y_gen):
         """
         Evaluates the privacy state of the model based on generated samples.
@@ -239,21 +292,43 @@ class RLAgent:
        
         X_fake = self.load_fake_data(X_num, X_cat, y_gen)
         X_fake = np.asarray(X_fake)
+        start = time.time()
         
         eval_metrics = {}
-        eval_metrics["DCR"] = compute_dcr(original_data=self.real_data, synthetic_data=X_fake, num_numerical_features=self.raw_config['num_numerical_features'], category_sizes=self.category_sizes, task_type=self.task_type, distance_metric='euclidean')
-        eval_metrics["NNDR"] = compute_nndr(original_data=self.real_data, synthetic_data=X_fake, num_numerical_features=self.raw_config['num_numerical_features'], category_sizes=self.category_sizes, task_type=self.task_type, distance_metric='euclidean')
-        eval_metrics["Gower"] = compute_gowers_distance(original=self.real_data, synthetic=X_fake, n_num_features=self.raw_config['num_numerical_features'], category_sizes=self.category_sizes, task_type=self.task_type)
-        print(f"Privacy evaluation: {eval_metrics}")
-        for key, value in PRIVACY_CONFIG_DICT.items():
-            print(f"{key}: {eval_metrics[key]:.4f} (Benchmark: {value})")
-            if eval_metrics[key] < value:  # distance smaller than benchmark, privacy is low
-                return State.LOW
+        eval_metrics["dcr"] = compute_dcr(original_data=self.real_data, synthetic_data=X_fake, num_numerical_features=self.raw_config['num_numerical_features'], category_sizes=self.category_sizes, task_type=self.task_type, distance_metric='euclidean')
+        eval_metrics["nndr"] = compute_nndr(original_data=self.real_data, synthetic_data=X_fake, num_numerical_features=self.raw_config['num_numerical_features'], category_sizes=self.category_sizes, task_type=self.task_type, distance_metric='euclidean')
+        gower_matrix = compute_gowers_distance(original=self.real_data, synthetic=X_fake, n_num_features=self.raw_config['num_numerical_features'], category_sizes=self.category_sizes, task_type=self.task_type)
+        eval_metrics["gower"] = np.mean(gower_matrix)
+        eval_metrics["dcr_gower"] = np.min(gower_matrix)
+        end = time.time()
+        print(f"Evaluation time: {end-start}s")
+
+        for i in range(len(self.privacy_cycle)):
+            key = next(self.privacy_cycle)
+            if self.get_state().value == key:
+                continue  # skip current state
+            if key == "nndr" and eval_metrics[key] > self.privacy_threshold[key]:
+                print(f"{key}: {eval_metrics[key]:.4f} (Benchmark: {self.privacy_threshold[key]})")
+                self.__state = State(key)
+                return State(key)
+            
+            elif key == "dcr" and eval_metrics[key] < self.privacy_threshold[key]:
+                print(f"{key}: {eval_metrics[key]:.4f} (Benchmark: {self.privacy_threshold[key]})")
+                self.__state = State(key)
+                return State(key)
+            
+            elif key == "gower" and eval_metrics[key] < self.privacy_threshold[key]:
+                print(f"{key}: {eval_metrics[key]:.4f} (Benchmark: {self.privacy_threshold[key]})")
+                self.__state = State(key)
+                return State(key)
+        
+        self.__state = State.HIGH
         return State.HIGH
                 
 
 
-    def train_model(self, state) -> DatasetInfo:
+    def train_model(self) -> DatasetInfo:
+        state = self.get_state()
         
         if state == State.HIGH:
             action = Action.Conventional
@@ -276,7 +351,7 @@ class RLAgent:
                 change_val=self.args.change_val,
                 continue_training=True
             )
-        elif state == State.LOW:
+        elif state == State.LOW_DCR:
             action = Action.Privacy
             print(f"{action.value}")
             return train(
@@ -294,12 +369,56 @@ class RLAgent:
                 num_numerical_features=self.raw_config['num_numerical_features'],
                 device=self.device,
                 change_val=self.args.change_val,
-                continue_training=True
-            )    
+                continue_training=True,
+                privacy_metric="dcr"
+            )
+        elif state == State.LOW_NNDR:
+            action = Action.Privacy
+            print(f"{action.value}")
+            return train(
+                steps=self.steps_per_round,
+                start_privacy_step=0,
+                lr = self.raw_config['train']['main']['lr'],
+                weight_decay = self.raw_config['train']['main']['weight_decay'],
+                batch_size=self.raw_config['train']['main']['batch_size'],
+                **self.raw_config['diffusion_params'],
+                parent_dir=self.raw_config['parent_dir'],
+                real_data_path=self.raw_config['real_data_path'],
+                model_type=self.raw_config['model_type'],
+                model_params=self.raw_config['model_params'],
+                T_dict=self.raw_config['train']['T'],
+                num_numerical_features=self.raw_config['num_numerical_features'],
+                device=self.device,
+                change_val=self.args.change_val,
+                continue_training=True,
+                privacy_metric="nndr"
+            )
+        elif state == State.LOW_GOWER:
+            action = Action.Privacy
+            print(f"{action.value}")
+            return train(
+                steps=self.steps_per_round,
+                start_privacy_step=0,
+                lr = self.raw_config['train']['main']['lr'],
+                weight_decay = self.raw_config['train']['main']['weight_decay'],
+                batch_size=self.raw_config['train']['main']['batch_size'],
+                **self.raw_config['diffusion_params'],
+                parent_dir=self.raw_config['parent_dir'],
+                real_data_path=self.raw_config['real_data_path'],
+                model_type=self.raw_config['model_type'],
+                model_params=self.raw_config['model_params'],
+                T_dict=self.raw_config['train']['T'],
+                num_numerical_features=self.raw_config['num_numerical_features'],
+                device=self.device,
+                change_val=self.args.change_val,
+                continue_training=True,
+                privacy_metric="gower"
+            )
+        else:
+            raise ValueError("Invalid State encountered in RL Agent.")                   
 
 
 def main():
-
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', metavar='FILE')
     parser.add_argument('--train', action='store_true', default=False)
@@ -317,7 +436,7 @@ def main():
     else:
         device = torch.device('cuda:0')  # Original 'cuda:1'
     print("Starting agent ...")
-    agent = RLAgent(name="RLAgent1", rounds=10, steps_per_round=1000, evaluation_samples=2000, args=args, raw_config=raw_config, device=device)
+    agent = RLAgent(name="RLAgent1", steps_per_round=1000, evaluation_samples=2000, args=args, raw_config=raw_config, device=device)
     agent.run_algorithm()
     
     

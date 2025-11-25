@@ -8,7 +8,7 @@ from sample import sample
 from eval_catboost import train_catboost
 from eval_mlp import train_mlp
 from eval_simple import train_simple
-from evaluate_privacy import load_data, evaluate_generation
+from evaluate_privacy import load_data, evaluate_generation, evaluate_privacy_main
 import pandas as pd
 import matplotlib.pyplot as plt
 import zero
@@ -33,7 +33,7 @@ def save_file(parent_dir, config_path):
     
 
 def main():
-    # Not tested as a self-standing file yet
+    
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', metavar='FILE')
     parser.add_argument('--train', action='store_true', default=False)
@@ -99,7 +99,6 @@ def main():
         print(f"Sampling time: {b} seconds")
         
         
-
     save_file(os.path.join(raw_config['parent_dir'], 'info.json'), os.path.join(raw_config['real_data_path'], 'info.json'))
     if args.eval:
         eval_start = time.time()
@@ -137,10 +136,40 @@ def main():
 
     print(f'Elapsed time: {str(timer)}')
     
+    evaluate_privacy_main(args)
     
-    x_real, x_fake = load_data(raw_config['real_data_path'], raw_config['parent_dir'])
-    # continue here, change implementation of evaluate generation fo account for concatenated num+cat
-    stats, scores = evaluate_generation(x_real, x_fake, N)
+
+def main_debug():
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', metavar='FILE')
+    parser.add_argument('--train', action='store_true', default=False)
+    parser.add_argument('--start_privacy_step', action='store_true',  default=-1)
+    parser.add_argument('--sample', action='store_true',  default=False)
+    parser.add_argument('--eval', action='store_true',  default=False)
+    parser.add_argument('--change_val', action='store_true',  default=False)
+
+    args = parser.parse_args()
+    raw_config = lib.load_config(args.config)
+    dataset_info = lib.load_json(os.path.join(raw_config['parent_dir'], 'DatasetInfo.json'))
+    if 'device' in raw_config:
+        device = torch.device('cuda:0')  # Paul
+        # device = torch.device(raw_config['device'])  # Use specified device
+    else:
+        device = torch.device('cuda:0')  # Original 'cuda:1'
+    
+    a,b,c = 0,0,0
+    N = raw_config['num_numerical_features']
+    timer = zero.Timer()
+    timer.run()
+    save_file(os.path.join(raw_config['parent_dir'], 'config.toml'), args.config)
+    
+    x_real, x_fake, target_size, task_type = load_data(raw_config['real_data_path'], raw_config['parent_dir'])
+    # continue here, change implementation of evaluate generation fo account for concatenated num+
+    dataset_info['category_sizes'].append(target_size)
+    print(f"Dataset_info: {dataset_info}\nnum_numerical_features: {N}\ntask_type: {task_type}\ncategory_sizes: {dataset_info['category_sizes']}")
+    print(f"x_real shape: {x_real.shape}, x_fake shape: {x_fake.shape}")
+    stats, scores = evaluate_generation(x_real, x_fake, num_numerical_features=N, category_sizes=dataset_info['category_sizes'], task_type=task_type)
     
     with open(os.path.join(raw_config['parent_dir'], raw_config['evaluation_file']), 'w') as file:
         # Use .write() for a single string
@@ -152,7 +181,8 @@ def main():
         file.write(f"Numerical Data Stats and Scores:\n")
         file.write(str(stats) + "\n")
         file.write(str(scores) + "\n")
-        
+
+     
 
 if __name__ == '__main__':
     main()
