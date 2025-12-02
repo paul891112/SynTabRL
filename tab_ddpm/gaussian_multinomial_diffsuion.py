@@ -588,6 +588,7 @@ class GaussianMultinomialDiffusion(torch.nn.Module):
             loss = kl / pt + kl_prior
 
             return -loss
+        
     
     def mixed_loss(self, x, out_dict, privacy_metric="nndr"):
         b = x.shape[0]
@@ -621,20 +622,18 @@ class GaussianMultinomialDiffusion(torch.nn.Module):
         loss_gauss = torch.zeros((1,)).float()
         loss_privacy_num = torch.zeros((1,)).float()
         loss_privacy_cat = torch.zeros((1,)).float()
+        
+        # Import PRIVACY_FUNCTIONS from privacy.py to compute different types of privacy losses
         if x_cat.shape[1] > 0:
             loss_multi = self._multinomial_loss(model_out_cat, log_x_cat, log_x_cat_t, t, pt, out_dict) / len(self.num_classes)
-            # Get privacy loss ratio for categorical part, pass input, model output, number of categorical features
-            loss_privacy_cat = categorical_privacy_loss(log_x_cat, model_out_cat, len(self.num_classes))
+            # loss_privacy_cat = categorical_privacy_loss(log_x_cat, model_out_cat, len(self.num_classes), self.num_classes)
+            loss_privacy_cat = PRIVACY_FUNCTIONS[f"{privacy_metric}_cat_loss"](log_x_cat, model_out_cat, len(self.num_classes), self.num_classes)  # PRIVACY_FUNCTIONS return value already called .mean()
         
         if x_num.shape[1] > 0:
             loss_gauss = self._gaussian_loss(model_out_num, x_num, x_num_t, t, noise)
-            loss_privacy_num = nndr_loss(x_num, model_out_num)
+            loss_privacy_num = PRIVACY_FUNCTIONS[f"{privacy_metric}_num_loss"](x_num, model_out_num)  # PRIVACY_FUNCTIONS return value already called .mean()
             
-            
-        if privacy_metric == "gower":
-            return loss_multi.mean(), loss_gauss.mean(), compute_gower_cat(log_x_cat, model_out_cat, len(self.num_classes), self.num_classes), compute_gower_num(x_num, model_out_num).mean()
-
-        return loss_multi.mean(), loss_gauss.mean(), loss_privacy_cat.mean(), loss_privacy_num.mean()
+        return loss_multi.mean(), loss_gauss.mean(), loss_privacy_cat, loss_privacy_num
     
     @torch.no_grad()
     def mixed_elbo(self, x0, out_dict):

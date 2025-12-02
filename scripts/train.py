@@ -9,9 +9,10 @@ from utils_train import get_model, make_dataset, update_ema
 import lib
 import pandas as pd
 
-PRIVACY_METRIC = {"nndr", "gower"}
+PRIVACY_METRIC = {"dcr", "nndr", "gower"}
 GOWER_STD = 0.2
 NOISE_STD = 0.0001  # Standard deviation of noise added to EMA model parameters
+LOSS_HISTORY_COLUMNS = ['step', 'privacy_loss_type', 'mloss', 'gloss', 'mprivacy', 'gprivacy', 'loss']
 
 class DatasetInfo:
     """
@@ -39,7 +40,7 @@ class Trainer:
         self.init_lr = lr
         self.optimizer = torch.optim.AdamW(self.diffusion.parameters(), lr=lr, weight_decay=weight_decay)
         self.device = device
-        self.loss_history = pd.DataFrame(columns=['step', 'mloss', 'gloss', 'loss'])
+        self.loss_history = pd.DataFrame(columns=LOSS_HISTORY_COLUMNS)
         self.log_every = 100
         self.print_every = 500
         self.ema_every = 1000
@@ -74,10 +75,35 @@ class Trainer:
 
         return loss_multi, loss_gauss
     
+    def _run_step_privacy_dcr(self, loss_multi, loss_gauss, privacy_multi, privacy_gauss):
+        """
+        DCR privacy terms are bounded in range [0, 1], implemented in privacy.py,
+        where 0 means identity and 1 means perfect mismatch. Aim for privacy_loss = 1.
+        """
+        loss_multi = loss_multi * (2 - privacy_multi)  # aim for privacy ratio = 1
+        loss_gauss = loss_gauss * (2 - privacy_gauss)  # aim for privacy ratio = 1
+        
+        loss = loss_multi + loss_gauss
+        return loss
+    
+    def _run_step_privacy_nndr(self, loss_multi, loss_gauss, privacy_multi, privacy_gauss):
+        loss_multi = loss_multi * (2 - privacy_multi)  # aim for privacy ratio = 1
+        loss_gauss = loss_gauss * (2 - privacy_gauss)  # aim for privacy ratio = 1
+            
+        loss = loss_multi + loss_gauss  #aim for privacy ratio = 1
+        return loss
+    
+    def _run_step_privacy_gower(self, loss_multi, loss_gauss, privacy_multi, privacy_gauss):
+        loss_multi = loss_multi * (2 - privacy_multi)  # aim for privacy ratio = 1
+        loss_gauss = loss_gauss * (2 - privacy_gauss)  # aim for privacy ratio = 1
+        
+        loss = (loss_multi + loss_gauss) * torch.normal(mean=1.0, std=GOWER_STD, size=(1,), device=self.device)  #aim for privacy ratio = 1
+        return loss
+    
     def _run_step_privacy(self, x, out_dict, privacy_metric='nndr'):
         """
         Incorporates privacy term to loss functions.\n
-        Use relative distance metric (normalized ratio [0, 1])\n
+        Use paramter privacy_metric to call loss function\n
         Loss function = (1 + ratio) * loss, aim for ratio = 1 so minimize 1-ratio\n
 
         Args:
@@ -95,10 +121,10 @@ class Trainer:
             for param in self.ema_model.parameters():
                 # Only apply to parameters that are meant to be trained
                 if param.requires_grad:
-                    # 3. Sample noise tensor with the exact shape of the parameter
+                    # Sample noise tensor with the exact shape of the parameter
                     noise = noise_dist.sample(param.shape).to(self.device)
                     
-                    # 4. Inject the noise by adding it to the current parameter value
+                    # Inject the noise by adding it to the current parameter value
                     param.add_(noise)    
         
         self.optimizer.zero_grad()
@@ -113,32 +139,22 @@ class Trainer:
         if privacy_metric not in PRIVACY_METRIC:
             raise ValueError(f"Unknown privacy metric: {privacy_metric}. Supported metrics: {PRIVACY_METRIC}")
         
-        if privacy_metric == 'gower':
-            # Gower distance, 1 = highest dissimilarity, max privacy
-            # ignore conventional losses and only focus on privacy term
-            loss_multi = loss_multi * (2 - privacy_multi)  # aim for privacy ratio = 1
-            loss_gauss = loss_gauss * (2 - privacy_gauss)  # aim for privacy ratio = 1
+                
+        privacy_method = getattr(self, "_run_step_privacy_"+privacy_metric)
+        loss = privacy_method(loss_multi, loss_gauss, privacy_multi, privacy_gauss)     
             
-            loss = (loss_multi + loss_gauss) * torch.normal(mean=1.0, std=GOWER_STD, size=(1,), device=self.device)  #aim for privacy ratio = 1
-            loss.backward()
-            self.optimizer.step()            
-        
-        else:
-            loss_multi = loss_multi * (1 + privacy_multi)  # aim for privacy ratio = 0
-            loss_gauss = loss_gauss * (1 + privacy_gauss)  # aim for privacy ratio = 0
-            
-            loss = loss_multi + loss_gauss  #aim for privacy ratio = 1
-            loss.backward()
-            self.optimizer.step()
+        loss.backward()
+        self.optimizer.step()
 
-        return loss_multi, loss_gauss
+        return loss_multi, loss_gauss, privacy_multi, privacy_gauss, loss
 
     def run_loop(self, start_privacy_step, privacy_metric):
         step = 0
         curr_loss_multi = 0.0
         curr_loss_gauss = 0.0
-        
-        
+        curr_privacy_multi = 0.0
+        curr_privacy_gauss = 0.0
+        curr_total_loss = 0.0
 
         curr_count = 0
         if start_privacy_step < 0:
@@ -148,7 +164,7 @@ class Trainer:
                 x, out_dict = next(self.train_iter)
                 out_dict = {'y': out_dict}
                 
-                # Always no privacy term
+                # Never use privacy term
                 batch_loss_multi, batch_loss_gauss = self._run_step(x, out_dict)
 
                 self._anneal_lr(step)
@@ -162,7 +178,7 @@ class Trainer:
                     gloss = np.around(curr_loss_gauss / curr_count, 4)
                     if (step + 1) % self.print_every == 0:
                         print(f'Step {(step + 1)}/{self.steps} MLoss: {mloss} GLoss: {gloss} Sum: {mloss + gloss}')
-                    self.loss_history.loc[len(self.loss_history)] =[step + 1, mloss, gloss, mloss + gloss]
+                    self.loss_history.loc[len(self.loss_history)] =[step + 1, "", mloss, gloss, 0, 0, mloss + gloss]
                     curr_count = 0
                     curr_loss_gauss = 0.0
                     curr_loss_multi = 0.0
@@ -192,13 +208,15 @@ class Trainer:
             while step < self.steps:
                 x, out_dict = next(self.train_iter)
                 out_dict = {'y': out_dict}
+                pm = privacy_metric
                 
                 
                 # Incorporates privacy term after certain training step
                 if step < start_privacy_step:
                     batch_loss_multi, batch_loss_gauss = self._run_step(x, out_dict)
+                    pm = ""
                 else:
-                    batch_loss_multi, batch_loss_gauss= self._run_step_privacy(x, out_dict, privacy_metric=privacy_metric)
+                    batch_loss_multi, batch_loss_gauss, batch_privacy_multi, batch_privacy_gauss, batch_total_loss = self._run_step_privacy(x, out_dict, privacy_metric=privacy_metric)
 
 
                 self._anneal_lr(step)
@@ -206,16 +224,25 @@ class Trainer:
                 curr_count += len(x)
                 curr_loss_multi += batch_loss_multi.item() * len(x)
                 curr_loss_gauss += batch_loss_gauss.item() * len(x)
+                curr_privacy_multi += batch_privacy_multi.item() * len(x)
+                curr_privacy_gauss += batch_privacy_gauss.item() * len(x)
+                curr_total_loss += batch_total_loss.item() * len(x)
 
                 if (step + 1) % self.log_every == 0:
                     mloss = np.around(curr_loss_multi / curr_count, 4)
                     gloss = np.around(curr_loss_gauss / curr_count, 4)
+                    mprivacy = np.around(curr_privacy_multi / curr_count, 4)
+                    gprivacy = np.around(curr_privacy_gauss/ curr_count, 4)
+                    total_loss = np.around(curr_total_loss / curr_count, 4)
                     if (step + 1) % self.print_every == 0:
-                        print(f'Step {(step + 1)}/{self.steps} MLoss: {mloss} GLoss: {gloss} Sum: {mloss + gloss}')
-                    self.loss_history.loc[len(self.loss_history)] =[step + 1, mloss, gloss, mloss + gloss]
+                        print(f'Step {(step + 1)}/{self.steps} MLoss: {mloss} GLoss: {gloss} MPrivacy: {mprivacy} GPrivacy: {gprivacy} Sum: {total_loss}')
+                    self.loss_history.loc[len(self.loss_history)] =[step + 1, pm, mloss, gloss, mprivacy, gprivacy, total_loss]
                     curr_count = 0
                     curr_loss_gauss = 0.0
                     curr_loss_multi = 0.0
+                    curr_privacy_gauss = 0.0
+                    curr_privacy_multi = 0.0
+                    curr_total_loss = 0.0
 
                 update_ema(self.ema_model.parameters(), self.diffusion._denoise_fn.parameters())
 
@@ -313,8 +340,7 @@ def train(
     info_json_path = os.path.join(parent_dir, 'DatasetInfo.json')
 
 
-    # C. Update the metadata dictionary with new information
-    # Assuming you want to add the final loss and the total steps run
+    # Update the metadata dictionary with new information
     new_info = {
         'task_type': dataset.task_type.value,  # 'binclass' or 'multiclass' or 'regression'
         'n_classes': dataset.n_classes, 
@@ -327,3 +353,5 @@ def train(
 
     # D. Save the updated dictionary back to the file (overwriting)
     lib.dump_json(new_info, info_json_path)
+    
+    return trainer.loss_history

@@ -1,5 +1,5 @@
 seed = 0
-parent_dir = "privacy_result/abalone/ddpm_mlp_best"
+parent_dir = "privacy_result/abalone/ddpm_mlp_best_multi_state"
 real_data_path = "data/abalone/"
 model_type = "mlp"
 num_numerical_features = 7
@@ -55,3 +55,8 @@ cat_nan_policy = "__none__"
 cat_min_frequency = "__none__"
 cat_encoding = "one-hot"
 y_policy = "default"
+
+[privacy.config]
+dcr = 0.3
+nndr = 0.6
+gower = 0.3

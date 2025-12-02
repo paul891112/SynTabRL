@@ -1,11 +1,10 @@
 seed = 0
-parent_dir = "privacy_result/churn2/ddpm_mlp_best_nndr"
+parent_dir = "privacy_result/churn2/ddpm_mlp_best_multi_state"
 real_data_path = "data/churn2/"
 model_type = "mlp"
 num_numerical_features = 7
 device = "cuda:1"
 evaluation_file = "eval.txt"
-privacy_metric = "nndr"
 
 [model_params]
 num_classes = 2
@@ -62,5 +61,5 @@ y_policy = "default"
 
 [privacy.config]
 dcr = 0.3
-nndr = 0.85
+nndr = 0.6
 gower = 0.2

@@ -1,0 +1,17 @@
+{
+    "task_type": "binclass",
+    "n_classes": null,
+    "n_num_features": 6,
+    "n_cat_features": 8,
+    "training_completed": true,
+    "category_sizes": [
+        9,
+        16,
+        7,
+        15,
+        6,
+        5,
+        2,
+        42
+    ]
+}

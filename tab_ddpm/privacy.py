@@ -6,68 +6,8 @@ import torch.nn.functional as F
 from torch.profiler import record_function
 import math
 
-def DCR_loss(x_num, model_out_num):
-    """
-    Paul
-    Calculates DCR loss for numerical and categorical features.
-    AI generated template.
+DCR_EXPONENTIAL_COMPLEMENT_CONSTANT = 1.5  # constant k in exponential complement
 
-    Args:
-        x_num (torch.Tensor): numerical features\n
-        model_out_num (torch.Tensor): numerical predictions\n
-    Returns:
-        torch.Tensor: DCR loss, distance to nearest record
-    """
-
-    start = time.time()  # record start time
-
-    # Compute pairwise distances: A[i] vs all rows in B
-    # distances will have shape [4096, 5000]
-    distances = torch.cdist(x_num, model_out_num)  # cdist is efficient for batched distances
-
-    # For each row in out_num, get the index of the nearest row in x_num
-    nearest_idx = torch.argmin(distances, dim=0)
-
-    # Optional: get the actual nearest rows
-    nearest_rows = x_num[nearest_idx]
-
-    # Get the actual distances
-    nearest_distances = distances[nearest_idx, torch.arange(model_out_num.shape[0])]
-
-    end = time.time()  # record start time
-
-    print(f"Sample record: {model_out_num[0]}")
-    print(f"Closest record: {nearest_rows[0]}")
-    print(f"Distance: {nearest_distances[0]}")
-    print(f"Test distance: {torch.dist(model_out_num[0], nearest_rows[0], p=2)}")
-    print("Elapsed time to calculate all pairwise distance:", end - start, "seconds")
-
-
-    A = torch.randn(4096, 7)   # (4096, 7)
-    B = torch.randn(7)         # (7,)
-
-    start = time.time()  # record start time
-
-    # Compute Euclidean (L2) distances between B and every row in A
-    # Broadcasting: (4096, 7) - (7,) → (4096, 7)
-    distances = torch.norm(A - B, dim=1)  # (4096,)
-
-    # Find index of the nearest row
-    min_idx = torch.argmin(distances)
-
-    # Get nearest row and its distance
-    nearest_row = A[min_idx]
-    nearest_distance = distances[min_idx]
-
-    end = time.time()  # record end time
-
-    print(f"Sample row: {B}")
-    print(f"Nearest row: {nearest_row}")
-    print(f"Nearest distance: {nearest_distance.item()}")
-    print(f"Test distance: {torch.dist(B, nearest_row, p=2)}")
-    print("Elapsed time to calculate all pairwise distance:", end - start, "seconds")
-    
-    return nearest_distance
 
 
 def nndr_loss(original, synthetic):
@@ -106,10 +46,10 @@ def nndr_loss(original, synthetic):
 
     # print(1/nndr_ratio.item())
     # print(f"Elapsed time: {end-start}s")
-    return nndr_ratio    
+    return nndr_ratio.mean()
 
     
-def categorical_privacy_loss(log_x_cat, model_out_cat, num_features):
+def categorical_privacy_loss(log_x_cat, model_out_cat, num_cat_features, category_sizes):
     """
     Paul
     Calculates privacy loss of input and output in the current training step.\n
@@ -122,17 +62,24 @@ def categorical_privacy_loss(log_x_cat, model_out_cat, num_features):
         
         model_out_cat (torch.Tensor): categorical predictions (logits)
         
-        t (int): diffusion timestep, the higher it is, the less influence should the current privacy component have on the total loss.
+        num_features: 
     Returns:
         torch.Tensor: privacy loss
     """
     with record_function("categorical_privacy_loss"):
         
-        
-        
-        probabilities = F.softmax(model_out_cat, dim=1)  # change from dim=0 to dim=1, 20.11.2025, not tested yet
+        probabilities = F.softmax(model_out_cat, dim=1)  
         x_cat_ohe = torch.exp(log_x_cat)
         
+        # Normalization mask, divide each element by the number of labels of the feature
+        mask = torch.ones(x_cat_ohe.shape[1], device=x_cat_ohe.device)
+        start_idx = 0
+        for size in category_sizes:
+            mask[start_idx:start_idx + size] = 1.0 / size
+            start_idx += size
+        mask = mask.unsqueeze(0)
+        probabilities = probabilities * mask
+        x_cat_ohe = probabilities * mask
         
         # Calculate distance between input and output categorical features
         distances = torch.cdist(probabilities, x_cat_ohe, p=2)
@@ -142,10 +89,10 @@ def categorical_privacy_loss(log_x_cat, model_out_cat, num_features):
         # Get the actual distances
         nearest_distances = distances[nearest_idx, torch.arange(model_out_cat.shape[0])]
                 
-        # Take the average and divide by sqrt(2) to normalize the maximum distance to 1
-        privacy_loss = nearest_distances/ (math.sqrt(2) * num_features)
+        # Divide by sqrt(2) to normalize the maximum distance to 1
+        privacy_loss = nearest_distances/ (math.sqrt(2))
         
-        return privacy_loss
+        return privacy_loss.mean()
     
 def compute_gower_num(x_num, model_out_num):
     """
@@ -163,7 +110,7 @@ def compute_gower_num(x_num, model_out_num):
     Returns:
         torch.Tensor: Gower's distance
     """
-    with record_function("gower_distance"):
+    with record_function("gower_distance_num"):
         
         # --- Numerical Feature Dissimilarity ---
         max_vals, _ = torch.max(x_num, dim=0, keepdim=True) # Shape (1, F_num)
@@ -186,7 +133,7 @@ def compute_gower_num(x_num, model_out_num):
         
 def compute_gower_cat(log_x_cat, model_out_cat, num_cat_features, category_sizes):
     
-    
+    with record_function("gower_distance_cat"):
         # --- Categorical Feature Dissimilarity ---
         log_x_recon = torch.empty_like(model_out_cat)
         
@@ -242,6 +189,66 @@ def compute_gower_cat(log_x_cat, model_out_cat, num_cat_features, category_sizes
         
         # Return the average of every pairwise Gower's distance
         return torch.mean(G_matrix)
+
+
+def dcr_cat_loss(log_x_cat, model_out_cat, num_cat_features, category_sizes):
+    
+    probabilities = F.softmax(model_out_cat, dim=1)  
+    x_cat_ohe = torch.exp(log_x_cat)
+    
+    start_idx = 0
+    mask = torch.ones(x_cat_ohe.shape[1], dtype=float, device=x_cat_ohe.device)
+    start_idx = 0
+    
+    # Normalize by the number of labels per feature
+    for size in category_sizes:
+        mask[start_idx:start_idx + size] = 1.0 / size
+        start_idx += size
+    mask = mask.unsqueeze(0)
+    weighted_synthetic_data = probabilities * mask
+    weighted_original_data = x_cat_ohe * mask
+    
+    dists = torch.cdist(
+        weighted_synthetic_data, 
+        weighted_original_data, 
+        p=2.0
+    )     
+    
+    # Find the nearest distance (d1), which is the 1st smallest value (k=1)
+    # The output is a named tuple (values, indices)
+    nearest_dist_tuple = torch.kthvalue(dists, k=1, dim=1)
+    nearest_distances = nearest_dist_tuple.values # Shape (num_synthetic_records)
+    
+    normalized = 1 - torch.exp(-DCR_EXPONENTIAL_COMPLEMENT_CONSTANT * nearest_distances)
+
+    return torch.mean(normalized)
     
 
+def dcr_num_loss(x_num, model_out_num):
+    
+    dists = torch.cdist(
+        model_out_num, 
+        x_num, 
+        p=2.0
+    )     
+    
+    # Find the nearest distance (d1), which is the 1st smallest value (k=1)
+    # The output is a named tuple (values, indices)
+    nearest_dist_tuple = torch.kthvalue(dists, k=1, dim=1)
+    nearest_distances = nearest_dist_tuple.values # Shape (num_synthetic_records)
+    
+    normalized = 1 - torch.exp(-DCR_EXPONENTIAL_COMPLEMENT_CONSTANT * nearest_distances)
+    
+    return torch.mean(normalized)
+    
         
+    
+PRIVACY_FUNCTIONS = {
+    "nndr_cat_loss": categorical_privacy_loss,
+    "nndr_num_loss": nndr_loss,
+    "gower_cat_loss": compute_gower_cat,
+    "gower_num_loss": compute_gower_num,
+    "dcr_cat_loss": dcr_cat_loss,
+    "dcr_num_loss":dcr_num_loss,
+    
+}

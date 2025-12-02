@@ -62,6 +62,6 @@ cat_encoding = "__none__"
 y_policy = "default"
 
 [privacy.config]
-dcr = 0.2
+dcr = 0.3
 nndr = 0.85
 gower = 0.2

@@ -10,6 +10,7 @@ from eval_catboost import train_catboost
 from eval_mlp import train_mlp
 from eval_simple import train_simple
 from evaluate_privacy import evaluate_generation, compute_dcr, compute_nndr, compute_gowers_distance
+from train import LOSS_HISTORY_COLUMNS
 import pandas as pd
 import matplotlib.pyplot as plt
 import zero
@@ -26,7 +27,7 @@ import gc
 
 PRIVACY_CONFIG_DICT = {
     "dcr": 0.3,  # the higher, the better privacy, but the lower fidelity
-    "nndr": 0.85,  # the lower, the better privacy
+    "nndr": 0.7,  # the higher, the better privacy
     "gower": 0.3  # the higher, the better privacy
                           }
 
@@ -45,46 +46,62 @@ def save_file(parent_dir, config_path):
 
 class State(Enum):
     """Represents the privacy state of the RL agent based on evaluation metrics."""
-    HIGH = 0,
-    LOW_DCR = "dcr",
-    LOW_NNDR = "nndr",
+    HIGH = 0
+    LOW_DCR = "dcr"
+    LOW_NNDR = "nndr"
     LOW_GOWER = "gower"
     
+PRIVACY_TO_STATE = {
+    "dcr": State.LOW_DCR,
+    "nndr": State.LOW_NNDR,
+    "gower": State.LOW_GOWER
+    
+}
+    
 class Action(Enum):
-    Conventional = "Model in high privacy state, train with conventional loss function",
+    Conventional = "Model in high privacy state, train with conventional loss function"
     Privacy = "Model in low privacy state, train with privacy-preserving loss function"
 
 
 class RLAgent:
-    def __init__(self, name="", steps_per_round=1000, evaluation_samples=2000, args=None, raw_config=None, device=None):
+    def __init__(self, name="", steps_per_round=1000, evaluation_samples=2000, args=None, raw_config=None, device=None, rounds=None, pretrain_steps=None):
         """
         RL Agent for training a diffusion model with privacy considerations. One agent for one dataset.
         Args:
             name (str): Name of the agent
-            rounds (int, optional): Number of training the agent should do. Each training is a \n
-            multi-step training process, determined by argument steps_per_round. Defaults to 20.
-            steps_per_round (int, optional): Number of training steps per round. Defaults to 1000.
+            steps_per_round(int, optional): number of steps to train after each interaction with environment. Defaults to 2000.
+            evaluation_samples(int, optional): number of samples used to evaluate state
+            args: arguments passed from command line call
+            raw_config: configuration dictionary from config.toml
+            rounds (int, optional): Number of training rounds the agent should do. Each training round is a multi-step training process, determined by argument steps_per_round.
+            pretrain_steps (int, optional): number of steps of pretraining before considering privacy. Defaults to steps_per_round (2000).
         """
         self.name = name
         self.steps_per_round = steps_per_round
         self.evaluation_samples = evaluation_samples
         self.__state = State.HIGH
         self.privacy_cycle = cycle(PRIVACY_CONFIG_DICT.keys())
+        self.loss_history = pd.DataFrame(columns=LOSS_HISTORY_COLUMNS)
 
         self.args = args
         self.raw_config = raw_config
         self.device = device
         self.privacy_metric = self.raw_config['privacy_metric'] if ('privacy_metric' in self.raw_config and self.raw_config['privacy_metric'] in PRIVACY_CONFIG_DICT.keys()) else 'nndr'  # 'nndr' or 'gower'
         self.privacy_threshold = self.load_privacy_config()
-        self.rounds = int(self.raw_config['train']['main']['steps'] / self.steps_per_round)
+        self.rounds = rounds if rounds else int(self.raw_config['train']['main']['steps'] / self.steps_per_round)
             
         self.real_data, self.target_size, self.dataset_info, self.mm, self.ohe = self.load_real_data(self.raw_config['real_data_path'])
         self.real_data = np.asarray(self.real_data)
+        
+        self.pretrain(pretrain_steps)
+        
         self.dataset_info.update(lib.load_json(os.path.join(self.raw_config['parent_dir'], 'DatasetInfo.json')))
         self.dataset_info['category_sizes'].append(self.target_size)
         print(f"RL agent {self.name} initialized to train for dataset {self.dataset_info['name']} with {self.rounds} rounds, each with {self.steps_per_round} steps.\nUse privacy metric: {self.privacy_metric}.")
         self.category_sizes = self.dataset_info.get('category_sizes')
         self.task_type = self.dataset_info.get('task_type')
+        
+        
     
     
     def get_state(self):
@@ -136,7 +153,7 @@ class RLAgent:
     
     def load_fake_data(self, X_num_fake, X_cat_fake, y_gen):
         """
-        Adopted from tab-ddpm/scripts/resample_privacy.py, which inturns is adapted from
+        Adopted from tab-ddpm/scripts/resample_privacy.py, which inturns is adapted from https://github.com/Team-TUD/CTAB-GAN/tree/main/model/eval
         
         """
         if self.task_type == 'regression':
@@ -183,26 +200,30 @@ class RLAgent:
         
     
     def pretrain(self, steps=None):
+        """
+        Before incorporating privacy, train the model using conventional tabddpm training script.
+        """
         if steps:
-            train(
-                steps=steps,
-                start_privacy_step=-1,
-                lr = self.raw_config['train']['main']['lr'],
-                weight_decay = self.raw_config['train']['main']['weight_decay'],
-                batch_size=self.raw_config['train']['main']['batch_size'],
-                **self.raw_config['diffusion_params'],
-                parent_dir=self.raw_config['parent_dir'],
-                real_data_path=self.raw_config['real_data_path'],
-                model_type=self.raw_config['model_type'],
-                model_params=self.raw_config['model_params'],
-                T_dict=self.raw_config['train']['T'],
-                num_numerical_features=self.raw_config['num_numerical_features'],
-                device=self.device,
-                change_val=self.args.change_val,
-                continue_training=False
-            )
+            train_result = train(
+                    steps=steps,
+                    start_privacy_step=-1,
+                    lr = self.raw_config['train']['main']['lr'],
+                    weight_decay = self.raw_config['train']['main']['weight_decay'],
+                    batch_size=self.raw_config['train']['main']['batch_size'],
+                    **self.raw_config['diffusion_params'],
+                    parent_dir=self.raw_config['parent_dir'],
+                    real_data_path=self.raw_config['real_data_path'],
+                    model_type=self.raw_config['model_type'],
+                    model_params=self.raw_config['model_params'],
+                    T_dict=self.raw_config['train']['T'],
+                    num_numerical_features=self.raw_config['num_numerical_features'],
+                    device=self.device,
+                    change_val=self.args.change_val,
+                    continue_training=False
+                )
+            self.loss_history = pd.concat([self.loss_history, train_result], axis=0, ignore_index=True)
         else:
-            train(
+            train_result = train(
                     steps=self.steps_per_round,
                     start_privacy_step=-1,
                     lr = self.raw_config['train']['main']['lr'],
@@ -219,21 +240,30 @@ class RLAgent:
                     change_val=self.args.change_val,
                     continue_training=False
                 )
+            self.loss_history = pd.concat([self.loss_history, train_result], axis=0, ignore_index=True)
     
     
     def run_algorithm(self):
-        
-        self.pretrain()
+        """
+        RL agent algorithm. Interact with environment and take action for n rounds, then log results.
+        Pretraining takes place at Agent object instantiation (__init__ function).
+        """
+        start = time.time()
         counter = 0
         for _ in range(self.rounds):
             counter += 1
             print(f"=== RL Agent Round {counter} ===")
             print(f"State: {self.get_state().name}")
-            self.train_model()
+            train_result = self.train_model()
+            self.loss_history = pd.concat([self.loss_history, train_result], axis=0, ignore_index=True)
             X_num, X_cat, y_gen = self.generate_samples()
-            self.__state = self.evaluate_state(X_num, X_cat, y_gen) 
+            self.evaluate_state(X_num, X_cat, y_gen) 
         # Generate evaluation.txt
+        elapsed = time.time() - start
         self.evaluate_generation()
+        self.loss_history.to_csv(os.path.join(self.raw_config['parent_dir'], 'RLAgentLoss.csv'), index=True)
+        minutes, seconds = divmod(elapsed, 60)
+        print(f"Training time without final evaluation: {int(minutes)} min {seconds:.2f} sec")
         
         
     def evaluate_generation(self):
@@ -299,35 +329,54 @@ class RLAgent:
         eval_metrics["nndr"] = compute_nndr(original_data=self.real_data, synthetic_data=X_fake, num_numerical_features=self.raw_config['num_numerical_features'], category_sizes=self.category_sizes, task_type=self.task_type, distance_metric='euclidean')
         gower_matrix = compute_gowers_distance(original=self.real_data, synthetic=X_fake, n_num_features=self.raw_config['num_numerical_features'], category_sizes=self.category_sizes, task_type=self.task_type)
         eval_metrics["gower"] = np.mean(gower_matrix)
-        eval_metrics["dcr_gower"] = np.min(gower_matrix)
         end = time.time()
         print(f"Evaluation time: {end-start}s")
+        print(f"dcr: {eval_metrics['dcr']}, nndr: {eval_metrics['nndr']}, gower: {eval_metrics['gower']}")
+        
 
-        for i in range(len(self.privacy_cycle)):
+        for i in range(len(PRIVACY_CONFIG_DICT.keys())):
+            
+            # Using circular list to avoid retraining on the same privacy metric
             key = next(self.privacy_cycle)
+            print(f"Evaluate on privacy metric: {key}")
+            
+            # prevent state deadlock, dont train in same state twice in a row
             if self.get_state().value == key:
-                continue  # skip current state
+                continue  
+                
+            if eval_metrics[key] < self.privacy_threshold[key]:
+               print(f"{key}: {eval_metrics[key]:.4f} (Benchmark: {self.privacy_threshold[key]})")
+               self.__state = PRIVACY_TO_STATE[key]
+               return self.__state
+               
+            """        
+            # Old implementation, abandoned on 02.12.2025
             if key == "nndr" and eval_metrics[key] > self.privacy_threshold[key]:
                 print(f"{key}: {eval_metrics[key]:.4f} (Benchmark: {self.privacy_threshold[key]})")
-                self.__state = State(key)
-                return State(key)
+                self.__state = State.LOW_NNDR
+                return State.LOW_NNDR
             
             elif key == "dcr" and eval_metrics[key] < self.privacy_threshold[key]:
                 print(f"{key}: {eval_metrics[key]:.4f} (Benchmark: {self.privacy_threshold[key]})")
-                self.__state = State(key)
-                return State(key)
+                self.__state = State.LOW_DCR
+                return State.LOW_DCR
             
             elif key == "gower" and eval_metrics[key] < self.privacy_threshold[key]:
                 print(f"{key}: {eval_metrics[key]:.4f} (Benchmark: {self.privacy_threshold[key]})")
-                self.__state = State(key)
-                return State(key)
-        
+                self.__state = State.LOW_GOWER
+                return State.LOW_GOWER
+                
+            """
+            
         self.__state = State.HIGH
         return State.HIGH
                 
 
 
     def train_model(self) -> DatasetInfo:
+        """
+        Set training parameters and settings based on current State.
+        """
         state = self.get_state()
         
         if state == State.HIGH:
@@ -421,10 +470,6 @@ class RLAgent:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', metavar='FILE')
-    parser.add_argument('--train', action='store_true', default=False)
-    parser.add_argument('--start_privacy_step', action='store_true',  default=-1)
-    parser.add_argument('--sample', action='store_true',  default=False)
-    parser.add_argument('--eval', action='store_true',  default=False)
     parser.add_argument('--change_val', action='store_true',  default=False)
     print("Parsing arguments ...")
 
@@ -436,9 +481,8 @@ def main():
     else:
         device = torch.device('cuda:0')  # Original 'cuda:1'
     print("Starting agent ...")
-    agent = RLAgent(name="RLAgent1", steps_per_round=1000, evaluation_samples=2000, args=args, raw_config=raw_config, device=device)
+    agent = RLAgent(name="RLAgent1", steps_per_round=2000, evaluation_samples=2000, args=args, raw_config=raw_config, device=device, rounds=15)
     agent.run_algorithm()
-    
     
 if __name__ == '__main__':
     main()

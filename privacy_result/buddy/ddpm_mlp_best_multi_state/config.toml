@@ -1,37 +1,38 @@
 seed = 0
-parent_dir = "privacy_result/churn2/ddpm_mlp_best_nndr"
-real_data_path = "data/churn2/"
+parent_dir = "privacy_result/buddy/ddpm_mlp_best_multi_state"
+real_data_path = "data/buddy/"
 model_type = "mlp"
-num_numerical_features = 7
-device = "cuda:1"
+num_numerical_features = 4
+device = "cuda:0"
 evaluation_file = "eval.txt"
-privacy_metric = "nndr"
 
 [model_params]
-num_classes = 2
+num_classes = 3
 is_y_cond = true
 
 [model_params.rtdl_params]
 d_layers = [
-    512,
     1024,
     1024,
     1024,
     1024,
-    256,
+    1024,
+    1024,
+    1024,
+    128,
 ]
 dropout = 0.0
 
 [diffusion_params]
-num_timesteps = 100
+num_timesteps = 1000
 gaussian_loss_type = "mse"
-scheduler = "cosine"
 
 [train.main]
 steps = 30000
-lr = 0.00015044197980173247
+start_privacy_step = 0
+lr = 0.0002795654837714865
 weight_decay = 0.0
-batch_size = 256
+batch_size = 4096
 
 [train.T]
 seed = 0
@@ -43,7 +44,7 @@ cat_encoding = "__none__"
 y_policy = "default"
 
 [sample]
-num_samples = 52000
+num_samples = 24000
 batch_size = 10000
 seed = 0
 
@@ -62,5 +63,5 @@ y_policy = "default"
 
 [privacy.config]
 dcr = 0.3
-nndr = 0.85
+nndr = 0.6
 gower = 0.2

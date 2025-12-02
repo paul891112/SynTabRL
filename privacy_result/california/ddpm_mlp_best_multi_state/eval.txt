@@ -1,0 +1,7 @@
+Training time: 234.64757299423218 seconds
+Sampling time: 15.460812091827393 seconds
+Evaluation time: 0 seconds
+Total elapsed time: 0:04:22
+Numerical Data Stats and Scores:
+{'wasserstein_distance_numerical': 0.0022538117400268277, 'js_similarity_categorical': 0.9993121089445506, 'correlation_pearson': 0.9751217042778683, 'correlation_spearman': 0.9971696033356834, 'dcr_all_euclidean': 0.05095802394884987, 'dcr_numerical_euclidean': 0.037700737681475215, 'dcr_categorical_hamming': 0.9957954545454546, 'nndr_euclidean': 0.8541117743430632, 'nndr_cosine': 0.7333892457309688}
+{'mean': 0.001629663550005604, 'median': 0.0011790666876238484, 'var': 0.0007393930663410896}
