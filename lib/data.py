@@ -676,7 +676,6 @@ def read_pure_data(path, split='train'):
         X_num = np.load(os.path.join(path, f'X_num_{split}.npy'), allow_pickle=True)
     if os.path.exists(os.path.join(path, f'X_cat_{split}.npy')):
         X_cat = np.load(os.path.join(path, f'X_cat_{split}.npy'), allow_pickle=True)
-
     return X_num, X_cat, y
 
 def read_changed_val(path, val_size=0.2):

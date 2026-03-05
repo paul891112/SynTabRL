@@ -9,6 +9,9 @@ import argparse
 from pathlib import Path
 from train_sample_ctabganp import train_ctabgan, sample_ctabgan
 from scripts.eval_catboost import train_catboost
+import logging
+
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument('data_path', type=str)
@@ -109,6 +112,17 @@ def objective(trial):
             score += metrics.get_val_score()
     return score / 5
 
+os.makedirs(f"exp/{Path(real_data_path).name}/ctabgan-plus/", exist_ok=True)
+
+logger = logging.getLogger("optuna")
+logger.setLevel(logging.INFO)
+
+handler = logging.FileHandler(f"exp/{Path(real_data_path).name}/ctabgan-plus/tune_ctabgan_logs.txt")
+logger.addHandler(handler)
+
+# 3. Run your study as usual
+study = optuna.create_study()
+study.optimize(objective, n_trials=10)
 
 study = optuna.create_study(
     direction='maximize',
@@ -117,7 +131,7 @@ study = optuna.create_study(
 
 study.optimize(objective, n_trials=35, show_progress_bar=True)
 
-os.makedirs(f"exp/{Path(real_data_path).name}/ctabgan-plus/", exist_ok=True)
+
 config = {
     "parent_dir": f"exp/{Path(real_data_path).name}/ctabgan-plus/",
     "real_data_path": real_data_path,

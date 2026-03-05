@@ -44,6 +44,8 @@ def main():
 
     args = parser.parse_args()
     raw_config = lib.load_config(args.config)
+    if 'evaluation_file' not in raw_config:
+        raw_config['evaluation_file'] = "evaluate_privacy.txt"
     if 'device' in raw_config:
         device = torch.device('cuda:0')  # Paul
         # device = torch.device(raw_config['device'])  # Use specified device
@@ -100,10 +102,11 @@ def main():
         
         
     save_file(os.path.join(raw_config['parent_dir'], 'info.json'), os.path.join(raw_config['real_data_path'], 'info.json'))
+    ml_res = None
     if args.eval:
         eval_start = time.time()
         if raw_config['eval']['type']['eval_model'] == 'catboost':
-            train_catboost(
+            ml_res = train_catboost(
                 parent_dir=raw_config['parent_dir'],
                 real_data_path=raw_config['real_data_path'],
                 eval_type=raw_config['eval']['type']['eval_type'],
@@ -112,7 +115,7 @@ def main():
                 change_val=args.change_val
             )
         elif raw_config['eval']['type']['eval_model'] == 'mlp':
-            train_mlp(
+            ml_res = train_mlp(
                 parent_dir=raw_config['parent_dir'],
                 real_data_path=raw_config['real_data_path'],
                 eval_type=raw_config['eval']['type']['eval_type'],
@@ -122,7 +125,7 @@ def main():
                 device=device
             )
         elif raw_config['eval']['type']['eval_model'] == 'simple':
-            train_simple(
+            ml_res = train_simple(
                 parent_dir=raw_config['parent_dir'],
                 real_data_path=raw_config['real_data_path'],
                 eval_type=raw_config['eval']['type']['eval_type'],
@@ -136,9 +139,9 @@ def main():
 
     print(f'Elapsed time: {str(timer)}')
     
-    evaluate_privacy_main(args)
+    evaluate_privacy_main(raw_config, ml_res, a+b+c)
     
-
+"""
 def main_debug():
     
     parser = argparse.ArgumentParser()
@@ -151,6 +154,8 @@ def main_debug():
 
     args = parser.parse_args()
     raw_config = lib.load_config(args.config)
+    if 'evaluation_file' not in raw_config:
+        raw_config['evaluation_file'] = "evaluate_privacy.txt"
     dataset_info = lib.load_json(os.path.join(raw_config['parent_dir'], 'DatasetInfo.json'))
     if 'device' in raw_config:
         device = torch.device('cuda:0')  # Paul
@@ -181,7 +186,7 @@ def main_debug():
         file.write(f"Numerical Data Stats and Scores:\n")
         file.write(str(stats) + "\n")
         file.write(str(scores) + "\n")
-
+"""
      
 
 if __name__ == '__main__':

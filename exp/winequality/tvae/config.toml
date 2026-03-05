@@ -1,0 +1,44 @@
+parent_dir = "exp/winequality/tvae/"
+real_data_path = "data/winequality"
+seed = 0
+device = "cuda:0"
+
+[train_params]
+lr = 0.0009217235358114417
+epochs = 30000
+embedding_dim = 512
+batch_size = 256
+loss_factor = 2.794269789859571
+compress_dims = [
+    64,
+    256,
+    256,
+    256,
+    256,
+    256,
+]
+decompress_dims = [
+    64,
+    256,
+    256,
+    256,
+    256,
+    256,
+]
+
+[sample]
+seed = 0
+num_samples = 33256
+
+[eval.type]
+eval_model = "catboost"
+eval_type = "synthetic"
+
+[eval.T]
+seed = 0
+normalization = "__none__"
+num_nan_policy = "__none__"
+cat_nan_policy = "__none__"
+cat_min_frequency = "__none__"
+cat_encoding = "__none__"
+y_policy = "default"

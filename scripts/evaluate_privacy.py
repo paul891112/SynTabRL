@@ -4,22 +4,26 @@ import os
 import argparse
 from enum import Enum
 from typing import Union, Dict, Optional
-from scipy.spatial import distance
+from scipy.spatial import distance, KDTree
 import time
 import matplotlib.pyplot as plt
 import lib
 import numpy as np
 import torch
 from sklearn.preprocessing import MinMaxScaler, OneHotEncoder
+from sklearn.metrics import pairwise_distances
 from scipy.stats import wasserstein_distance
 import gc
+import math
 
+from datasetinfo import generate_dataset_info
 
 def load_data(real_path, fake_path):
     
     """
     Adopted from tab-ddpm/scripts/resample_privacy.py, which inturns is adapted from https://github.com/Team-TUD/CTAB-GAN/tree/main/model/eval
     
+    Used in post-training privacy evaluation.
     """
     
     task_type = lib.load_json(real_path + "/info.json")["task_type"]
@@ -31,7 +35,7 @@ def load_data(real_path, fake_path):
         X_num_real = np.concatenate([X_num_real, y_real[:, np.newaxis]], axis=1)
         X_num_fake = np.concatenate([X_num_fake, y_fake[:, np.newaxis]], axis=1)
         target_size = 1
-    else:  # classification, binclass or multiclass
+    else:  # binclass or multiclass
         target_size = 2 if task_type == 'binclass' else len(np.unique(y_real))
         if X_cat_fake is None:
             X_cat_real = y_real[:, np.newaxis].astype(int).astype(str)
@@ -52,20 +56,63 @@ def load_data(real_path, fake_path):
         X_cat_fake = X_cat_fake[ixs] if X_cat_fake is not None else None
 
 
-    mm = MinMaxScaler().fit(X_num_real)
+    # mm = MinMaxScaler().fit(X_num_real)  # Fit normalizer on real data
+    # mm = MinMaxScaler().fit(X_num_fake)  # Fit normalizer on fake data, might have wider range than real data
+    # Combine numerical data to find the global min and max
+    combined_num = np.concatenate([X_num_real, X_num_fake], axis=0)
+    mm = MinMaxScaler().fit(combined_num)
     X_real = mm.transform(X_num_real)
     X_fake = mm.transform(X_num_fake)
+    X_real = np.clip(X_real, 0, 1)
+    X_fake = np.clip(X_fake, 0, 1)
+    
+    
     if X_cat_real is not None:
-        ohe = OneHotEncoder().fit(X_cat_real)
+        # ohe = OneHotEncoder().fit(X_cat_real)
+        combined_cat = np.concatenate([X_cat_real, X_cat_fake], axis=0)
+        ohe = OneHotEncoder(handle_unknown='ignore').fit(combined_cat)
+        
         X_cat_real = ohe.transform(X_cat_real) / np.sqrt(2)
         X_cat_fake = ohe.transform(X_cat_fake) / np.sqrt(2)
 
         X_real = np.concatenate([X_real, X_cat_real.todense()], axis=1)
         X_fake = np.concatenate([X_fake, X_cat_fake.todense()], axis=1)
+        
+        
+    # dist_rf = pairwise_distances(X_fake, Y=X_real, metric='l2', n_jobs=-1)
     
     return X_real, X_fake, target_size, task_type
 
-def compute_gowers_distance(original: np.ndarray, synthetic: np.ndarray, n_num_features: int, task_type: str, category_sizes: list) -> np.ndarray:
+
+def clean_input(category_sizes: list, task_type: str, n_features: int, num_numerical_features: int) -> list:
+    """
+    Cleans the category_sizes list by removing any zero entries.
+    This is useful for datasets that may not have categorical features.
+    
+    Parameters:
+    - category_sizes: list; containing the sizes of each categorical feature.
+    
+    Returns:
+    - 
+    """
+    # print(f"task_type: {task_type}, category_sizes: {category_sizes}, num_numerical_features: {num_numerical_features}, n_features: {n_features}")
+    
+        
+    if category_sizes[0] == 0:
+        assert len(category_sizes) == 2, "category_sizes expects either [0, target_size] or valid categorical sizes."
+        category_sizes = category_sizes[1:]  # remove first zero entry for datasets with only numerical features but multi-class target
+        # print(f"Only numerical features detected. Update category_sizes: {category_sizes}")
+    assert num_numerical_features is not None
+    assert n_features ==  num_numerical_features + sum(category_sizes), f"Category sizes do not match the number of categorical features: n_features={n_features}, num_numerical_features={num_numerical_features}, sum(category_sizes)={sum(category_sizes)}"
+    
+    if task_type == 'regression':
+        num_numerical_features += 1  # Include target variable
+        category_sizes = category_sizes[:-1]  # Exclude target variable
+
+    return category_sizes, num_numerical_features
+
+
+def compute_gowers_distance(original: np.ndarray, synthetic: np.ndarray, num_numerical_features: int, task_type: str, category_sizes: list, distance_metric: str=None) -> np.ndarray:
     """
     Computes Gower's distance between original and synthetic datasets.\n
     The average of every pairwise Gower's distance is returned.\n
@@ -74,8 +121,9 @@ def compute_gowers_distance(original: np.ndarray, synthetic: np.ndarray, n_num_f
     Parameters:
     - original: np.ndarray; The original dataset (samples x features).
     - synthetic: np.ndarray; The synthetic dataset (samples x features).
-    - n_num_features: int; The number of numerical features.
+    - num_numerical_features: int; The number of numerical features.
     - category_sizes: list; List containing the sizes of each categorical feature.
+    - task_type: str; regression, binclass, multiclass
 
     Returns:
     - numpy.ndarray; The Gower distance matrix of every real-synthetic pair.
@@ -83,23 +131,24 @@ def compute_gowers_distance(original: np.ndarray, synthetic: np.ndarray, n_num_f
     
     
     N_s = synthetic.shape[0]
-    sample_indices = np.random.choice(N_s, size=2000, replace=False)
+    size = min(original.shape[0], 2000)  # Sample at most 2000 records from original for efficiency
+    sample_indices = np.random.choice(N_s, size=size, replace=False)
     synthetic_sample = synthetic[sample_indices]
     N_o, N_s = original.shape[0], synthetic_sample.shape[0]
     if task_type == 'regression':
-            n_num_features += 1  # Include target variable
+            num_numerical_features += 1  # Include target variable
             category_sizes = category_sizes[:-1]  # Exclude target variable
     
     # Total number of features (used for normalization)
-    total_features = n_num_features + len(category_sizes)
+    total_features = num_numerical_features + len(category_sizes)
     if total_features == 0:
         return 0.0
     
     # --- 1. Numerical Feature Dissimilarity (d_num) ---
-    if n_num_features > 0:
+    if num_numerical_features > 0:
         # Extract numerical features
-        O_num = original[:, :n_num_features]
-        S_num = synthetic_sample[:, :n_num_features]
+        O_num = original[:, :num_numerical_features]
+        S_num = synthetic_sample[:, :num_numerical_features]
         
         # Broadcasting: O_num[:, None, :] subtracts S_num[None, :, :]
         # O_num is (N_o, 1, n_num), S_num is (1, N_s, n_num) -> Result is (N_o, N_s, n_num)
@@ -115,7 +164,7 @@ def compute_gowers_distance(original: np.ndarray, synthetic: np.ndarray, n_num_f
     D_cat_sum = np.zeros((N_o, N_s))
     
     if len(category_sizes) > 0:
-        runner = n_num_features
+        runner = num_numerical_features
         
         for size in category_sizes:
             # Extract one-hot-encoded columns for the current feature
@@ -138,13 +187,48 @@ def compute_gowers_distance(original: np.ndarray, synthetic: np.ndarray, n_num_f
     # --- 3. Final Gower Distance Calculation ---
     G_matrix = (D_num_sum + D_cat_sum) / total_features
     
-    # Return the pairwise Gower's distance matrix
+    # --- 4. Return real-data-sample-wise DCR ---
+    # return np.min(G_matrix, axis=1)
+    
+    # Return the pairwise Gower's distance matrix, Old approach
     return G_matrix
-            
 
-def compute_dcr(
-    original_data: np.ndarray, 
-    synthetic_data: np.ndarray,
+def compute_gowers_DCR(original: np.ndarray, synthetic: np.ndarray, num_numerical_features: int, task_type: str, category_sizes: list, distance_metric: str=None) -> float:
+    
+    """
+    Computes the Distance to Closest Record (DCR) using Gower's distance between the synthetic and original datasets.
+
+    DCR is the average minimum Gower's distance from each record in the synthetic 
+    dataset to its closest record in the original dataset.
+
+    Parameters:
+    - original: np.ndarray; The original dataset (samples x features).
+    - synthetic: np.ndarray; The synthetic dataset (samples x features).
+    - num_numerical_features: int; The number of numerical features.
+    - category_sizes: list; List containing the sizes of each categorical feature.
+    - task_type: str; regression, binclass, multiclass
+    """
+    G_matrix = compute_gowers_distance(original, synthetic, num_numerical_features, task_type, category_sizes, distance_metric)
+    dcr_per_sample = np.min(G_matrix, axis=1)
+    return float(np.mean(dcr_per_sample))
+
+def gowers_matrix_to_dcr(gowers_matrix: np.ndarray) -> float:
+    """
+    Converts a Gower's distance matrix to a DCR score by finding the minimum distance for each synthetic record and averaging these minimum distances.
+
+    Parameters:
+    - gowers_matrix: np.ndarray; The Gower's distance matrix (original_samples x synthetic_samples).
+
+    Returns:
+    - float: The average minimum distance (DCR score).
+    """
+    dcr_per_sample = np.min(gowers_matrix, axis=1)
+    return float(np.mean(dcr_per_sample))
+
+
+def compute_dcr_without_categorysize_normalization(
+    original: np.ndarray, 
+    synthetic: np.ndarray,
     num_numerical_features: Optional[int] = None,
     category_sizes: Optional[list] = None,
     distance_metric: str = 'euclidean',
@@ -152,7 +236,7 @@ def compute_dcr(
 ) -> float:
     """
     Computes the Distance to Closest Record (DCR) between the synthetic and 
-    original datasets using NumPy and SciPy's distance module. The categorical data are weighted by the number of labels per feature, the input data is already normalized with the maximal euclidean distance per categorical feature sqrt(2).
+    original datasets using NumPy and SciPy's distance module. The input data is already normalized with the maximal euclidean distance per categorical feature sqrt(2). However, categorical data is not normalized with category_sizes, because at evaluation time, the DCR distance should reflect the true euclidean distance.
 
     DCR is the average minimum distance from each record in the synthetic 
     dataset to its closest record in the original dataset.
@@ -169,8 +253,48 @@ def compute_dcr(
                       of each categorical feature. 
     - distance_metric: str (default: 'euclidean'); The metric for calculating 
                        distances (e.g., 'euclidean', 'cityblock', 'cosine').
-    - weights: Optional[np.ndarray] (default: None); Array of weights for each 
-               feature. If None, all features are weighted equally (1.0).
+    - task_type: str; regression, binclass or multiclass
+
+    Returns:
+    - float: The average minimum distance (DCR score).
+    """
+    
+    tree = KDTree(original)
+    min_distances, _ = tree.query(synthetic, k=1)
+
+    return float(np.mean(min_distances))
+            
+
+def compute_dcr_KDTree(
+    original: np.ndarray, 
+    synthetic: np.ndarray,
+    num_numerical_features: Optional[int] = None,
+    category_sizes: Optional[list] = None,
+    distance_metric: str = 'euclidean',
+    task_type: str = None
+) -> float:
+    """
+    Computes the Distance to Closest Record (DCR) between the synthetic and 
+    original datasets using NumPy and SciPy's distance module. The categorical 
+    data are weighted by the number of labels per feature, the input data is already 
+    normalized with the maximal euclidean distance per categorical feature sqrt(2).
+
+    DCR is the average minimum distance from each record in the synthetic 
+    dataset to its closest record in the original dataset.
+
+    Parameters:
+    - original_data: np.ndarray; The original dataset (samples x features). 
+                     Assumed to be transformed and normalized.
+    - synthetic_data: np.ndarray; The synthetic dataset (samples x features). 
+                      Assumed to be transformed and normalized.
+    - num_numerical_features: Optional[int] (default: None); The number of 
+                             numerical features in the dataset. If None or 
+                             invalid, all features are treated equally.
+    - category_sizes: Optional[list] (default: None); List containing the sizes 
+                      of each categorical feature. 
+    - distance_metric: str (default: 'euclidean'); The metric for calculating 
+                       distances (e.g., 'euclidean', 'cityblock', 'cosine').
+    - task_type: str; regression, binclass or multiclass
 
     Returns:
     - float: The average minimum distance (DCR score).
@@ -178,33 +302,57 @@ def compute_dcr(
     
     # --- 1. Validate and Prepare Weights ---
     
-    n_features = original_data.shape[1]
-    if task_type:  # Numerical + Categorical features
-        assert n_features ==  num_numerical_features + sum(category_sizes), f"Category sizes do not match the number of categorical features: n_features={n_features}, num_numerical_features={num_numerical_features}, sum(category_sizes)={sum(category_sizes)}"
+    n_features = original.shape[1]
+    feature_weights = np.ones(n_features)  # Initiate uniform weights
+    
+    
+    if task_type and (category_sizes is not None):  # Numerical + Categorical features, update feautre_weights
+        category_sizes, num_numerical_features = clean_input(category_sizes, task_type, n_features, num_numerical_features)
         
-        if task_type == 'regression':
-            num_numerical_features += 1  # Include target variable
-            category_sizes = category_sizes[:-1]  # Exclude target variable
+        start_idx = num_numerical_features
+        max_normal_dist = 0.0  # track sum of maximal distance per feature, 1/category_size
         
-        # Use uniform weights of 1.0
-        feature_weights = np.ones(n_features)
-        # Assign weight 1/sqrt(2) to non-numerical features
-        mask = np.ones_like(feature_weights[num_numerical_features:], dtype=float)
-        start_idx = 0
         for size in category_sizes:
-            mask[start_idx:start_idx + size] = 1.0 / size
-            start_idx += size
-        feature_weights[num_numerical_features:] = mask
-    else:  # only numerical features
-        feature_weights = np.ones(n_features)
-        
+            weight = 1.0 / size
+            end_idx = start_idx + size
+            max_normal_dist += 1/size  # loaded data already normalized by sqrt(2)
+            # Apply weight to all one-hot columns of this category
+            feature_weights[start_idx:end_idx] = weight
+            start_idx = end_idx # Move to the start of the next category
+            
+        feature_weights[num_numerical_features:] /= math.sqrt(max_normal_dist)
+        # print(f"In DCR, Feature weights: {feature_weights},\n Max: {max_normal_dist}")
     
 
     # --- 2. Apply Feature Weights ---
     
-    weighted_original_data = original_data * feature_weights
-    weighted_synthetic_data = synthetic_data * feature_weights
+    weighted_original_data = original * feature_weights
+    weighted_synthetic_data = synthetic * feature_weights
     
+    # --- 3. Compute Pairwise Minimal Distances ---
+    tree = KDTree(weighted_original_data)
+    min_distances, _ = tree.query(weighted_synthetic_data, k=1)
+    
+    res = float(np.mean(min_distances))
+    
+    
+    if res >= 1.3:
+        
+        print(f"Original data sample: {original[0]}")
+        print(f"Synthetic data sample: {synthetic[0]}")
+        
+        print(f"Weighted original data sample: {weighted_original_data[0]}")
+        print(f"Weighted synthetic data sample: {weighted_synthetic_data[0]}")
+        
+        print(f"Sample min distances in DCR: {min_distances[:5]}")
+        print(f"DCR result: {res}")
+        raise Exception("Debug DCR, high DCR detected.")
+    
+    # --- 4. Find Minimum Distances
+    return res
+    
+    
+    """
     # --- 3. Compute Pairwise Distances ---
     # The output 'dists' has shape (num_synthetic_records, num_original_records).
     dists = distance.cdist(
@@ -223,10 +371,130 @@ def compute_dcr(
     dcr_score = np.mean(min_distances)
     
     return dcr_score
+    """
+    
+    
+    
+def compute_dcr(
+    original: np.ndarray, 
+    synthetic: np.ndarray,
+    num_numerical_features: Optional[int] = None,
+    category_sizes: Optional[list] = None,
+    distance_metric: str = 'euclidean',
+    task_type: str = None,
+    return_min_distances: bool = False,
+) -> float:
+    """
+    Computes the Distance to Closest Record (DCR) between the synthetic and 
+    original datasets using NumPy and SciPy's distance module. The categorical 
+    data are weighted by the number of labels per feature, the input data is already 
+    normalized with the maximal euclidean distance per categorical feature sqrt(2).
+
+    DCR is the average minimum distance from each record in the synthetic 
+    dataset to its closest record in the original dataset.
+
+    Parameters:
+    - original_data: np.ndarray; The original dataset (samples x features). 
+                     Assumed to be transformed and normalized.
+    - synthetic_data: np.ndarray; The synthetic dataset (samples x features). 
+                      Assumed to be transformed and normalized.
+    - num_numerical_features: Optional[int] (default: None); The number of 
+                             numerical features in the dataset. If None or 
+                             invalid, all features are treated equally.
+    - category_sizes: Optional[list] (default: None); List containing the sizes 
+                      of each categorical feature. 
+    - distance_metric: str (default: 'euclidean'); The metric for calculating 
+                       distances (e.g., 'euclidean', 'cityblock', 'cosine').
+    - task_type: str; regression, binclass or multiclass
+
+    Returns:
+    - float: The average minimum distance (DCR score).
+    """
+    
+    original = np.asarray(original)
+    synthetic = np.asarray(synthetic)
+    
+    # --- 1. Validate and Prepare Weights ---
+    
+    n_features = original.shape[1]
+    feature_weights = np.ones(n_features)  # Initiate uniform weights
+    
+    # Normalize numerical features equally, such that DCR doesnt exceed 1.0
+    # feature_weights[:num_numerical_features] = 1/num_numerical_features 
+    
+    if task_type and (category_sizes is not None):  # Numerical + Categorical features, update feautre_weights
+        category_sizes, num_numerical_features = clean_input(category_sizes, task_type, n_features, num_numerical_features)
+        
+        start_idx = num_numerical_features
+        max_normal_dist = 0.0  # track sum of maximal distance per feature, 1/category_size
+        
+        for size in category_sizes:
+            weight = 1.0 / size
+            end_idx = start_idx + size
+            max_normal_dist += 1/size  # loaded data already normalized by sqrt(2)
+            # Apply weight to all one-hot columns of this category
+            feature_weights[start_idx:end_idx] = weight
+            start_idx = end_idx # Move to the start of the next category
+            
+        feature_weights[num_numerical_features:] /= math.sqrt(max_normal_dist)
+        # print(f"In DCR, Feature weights: {feature_weights},\n Max: {max_normal_dist}")
+    
+
+    # --- 2. Apply Feature Weights ---
+    
+    
+    weighted_original_data = original * feature_weights
+    weighted_synthetic_data = synthetic * feature_weights
+    # weighted_original_data = np.clip(weighted_original_data, 0, 1)
+    # weighted_synthetic_data = np.clip(weighted_synthetic_data, 0, 1)
+    
+    has_larger = (weighted_original_data > 1).any()
+    has_negative = (weighted_original_data < 0).any()
+    # print(f"in evaluate_privacy.py, weighted_original_data has elements > 1: {has_larger}. ")
+    # print(f"In evaluate_privacy.py, weighted_original_data has negative: {has_negative}")
+    
+    has_larger = (weighted_synthetic_data > 1).any()
+    has_negative = (weighted_synthetic_data < 0).any()
+    # print(f"in evaluate_privacy.py, weighted_synthetic_data has elements > 1: {has_larger}. ")
+    # print(f"In evaluate_privacy.py, weighted_synthetic_data has negative: {has_negative}")
+
+    # --- 3. Compute Pairwise Minimal Distances ---
+    dist_rf = pairwise_distances(weighted_synthetic_data, Y=weighted_original_data, n_jobs=-1)
+    min_distances = np.min(dist_rf, axis=1)
+    if return_min_distances:
+        return min_distances
+    # print("min_distances:", min_distances[:10])
+    
+    # rows, cols = np.where(original > 1.0)
+
+    # print("Row indices:", rows)    # [0, 1, 1]
+    # print("Column indices:", cols) # [1, 0, 2]
+
+    # You can use this result to immediately access the values
+    # print("orignal > 1:", original[rows, cols]) # [-2, -1, -6]
+    
+    res = float(np.mean(min_distances))
+    # print(f"In compute_dcr, DCR result: {res}")
+    
+    """ If DCR serves as a scalar loss value, there is no need to bound DCR to [0, 1].
+    if res >= 1.0:
+        
+        print(f"Original data sample: {original[0]}")
+        print(f"Synthetic data sample: {synthetic[0]}")
+        
+        print(f"Weighted original data sample: {weighted_original_data[0]}")
+        print(f"Weighted synthetic data sample: {weighted_synthetic_data[0]}")
+        
+        print(f"Sample min distances in DCR: {min_distances[:5]}")
+        print(f"DCR result: {res}")
+        raise Exception("Debug DCR, high DCR detected.")
+    """
+    # --- 4. Find Minimum Distances
+    return res
 
 def compute_nndr(
-    original_data: np.ndarray, 
-    synthetic_data: np.ndarray,
+    original: np.ndarray, 
+    synthetic: np.ndarray,
     num_numerical_features: Optional[int] = None,
     category_sizes: Optional[list] = None,
     task_type: str = None,
@@ -240,10 +508,13 @@ def compute_nndr(
     over all synthetic records.
 
     Parameters:
-    - original_data: np.ndarray; The original dataset (samples x features). 
+    - original: np.ndarray; The original dataset (samples x features). 
                      Assumed to be transformed and normalized.
-    - synthetic_data: np.ndarray; The synthetic dataset (samples x features). 
+    - synthetic: np.ndarray; The synthetic dataset (samples x features). 
                       Assumed to be transformed and normalized.
+    - num_numerical_features: int; number of numerical feaatures/ columns.
+    - category_sizes: list; list of ints, each element represents the number of categories per feature.
+    - task_type: str; regression, binclass or multiclass
     - distance_metric: str (default: 'euclidean'); The metric for calculating 
                        distances (e.g., 'euclidean', 'cityblock', 'cosine').
 
@@ -251,27 +522,42 @@ def compute_nndr(
     - float: The mean NNDR value for the synthetic dataset.
     """
     # --- 0. Validate Inputs and weights ---
-    n_features = original_data.shape[1]
-    if task_type == 'regression':
-            num_numerical_features += 1  # Include target variable
-            category_sizes = category_sizes[:-1]  # Exclude target variable
-    if num_numerical_features is None or num_numerical_features < 0 or num_numerical_features > n_features:
-        # Use uniform weights of 1.0
-        feature_weights = np.ones(n_features)
-    else:
-        feature_weights = np.ones(n_features)
+    n_features = original.shape[1]
+    feature_weights = np.ones(n_features)
+    
+    if task_type and (category_sizes is not None):  # Numerical + Categorical features, update feautre_weights
+        category_sizes, num_numerical_features = clean_input(category_sizes, task_type, n_features, num_numerical_features)
+        
+        start_idx = num_numerical_features
+        max_normal_dist = 0.0  # track sum of maximal distance per feature, 1/category_size
+        
+        for size in category_sizes:
+            weight = 1.0 / size
+            end_idx = start_idx + size
+            max_normal_dist += 1/size  # loaded data already normalized by sqrt(2)
+            # Apply weight to all one-hot columns of this category
+            feature_weights[start_idx:end_idx] = weight
+            start_idx = end_idx # Move to the start of the next category
+            
+        feature_weights[num_numerical_features:] /= math.sqrt(max_normal_dist)
+        
+        # print(f"In NNDR, categorical normalization mask: {feature_weights[num_numerical_features:]}, max. {max_normal_dist}")
+        
+        
+        """
         mask = np.ones_like(feature_weights[num_numerical_features:], dtype=float)
-        start_idx = 0
+        start_idx = 0  # because 'mask' starts at numerical_features
         for size in category_sizes:
             mask[start_idx:start_idx + size] = 1.0 / size
             start_idx += size
         feature_weights[num_numerical_features:] = mask
         feature_weights = feature_weights
+        """
 
     # --- Apply Feature Weights ---
     
-    weighted_original_data = original_data * feature_weights
-    weighted_synthetic_data = synthetic_data * feature_weights
+    weighted_original_data = original * feature_weights
+    weighted_synthetic_data = synthetic * feature_weights
     
     
     # --- Compute Pairwise Distances ---
@@ -432,8 +718,39 @@ def compute_js_similarity(original_data: np.ndarray, synthetic_data: np.ndarray)
     js_similarities = []
     
     # Small epsilon to avoid log(0) and division by zero issues
-    epsilon = 1e-10 
+    epsilon = 1e-10
+    """
+    for col_idx in range(num_features):
+        # 1. Compute proportions (P(1))
+        p_1_orig = np.mean(original_data[:, col_idx])
+        p_1_syn = np.mean(synthetic_data[:, col_idx])
+        
+        # 2. Build PMFs and Clip to [0, 1] range to avoid float drift
+        pmf_orig = np.array([1.0 - p_1_orig, p_1_orig])
+        pmf_syn = np.array([1.0 - p_1_syn, p_1_syn])
+        
+        # 3. Add epsilon and Re-normalize
+        # This ensures no zeros and that the sum is EXACTLY 1.0
+        pmf_orig = np.clip(pmf_orig, epsilon, 1.0)
+        pmf_syn = np.clip(pmf_syn, epsilon, 1.0)
+        pmf_orig /= pmf_orig.sum()
+        pmf_syn /= pmf_syn.sum()
 
+        # 4. Compute Distance
+        print("before JS")
+        js_dist = distance.jensenshannon(pmf_orig, pmf_syn, base=2.0)
+        print("after JS")
+        # 5. Handle potential NaN from Scipy's internal sqrt
+        if np.isnan(js_dist):
+            # If distributions are so close that float precision failed, 
+            # distance is effectively 0.0
+            js_dist = 0.0
+            
+        js_similarities.append(1.0 - js_dist)
+
+    return np.mean(js_similarities) 
+"""
+    # Smote with Buddy causes NaN in JS similarity
     # 2. Iterate through each feature column
     for col_idx in range(num_features):
         orig_col = original_data[:, col_idx]
@@ -467,6 +784,12 @@ def compute_js_similarity(original_data: np.ndarray, synthetic_data: np.ndarray)
         # 4. Compute Jensen-Shannon Distance
         # jensenshannon returns the square root of the JSD (i.e., the JS distance)
         js_distance = distance.jensenshannon(pmf_orig, pmf_syn, base=2)
+        
+        # Handle potential NaN from Scipy's internal sqrt
+        if np.isnan(js_distance):
+            # If distributions are so close that float precision failed, 
+            # distance is effectively 0.0
+            js_distance = 0.0
 
         # 5. Convert Distance to Similarity (where 1 is identical)
         # The JS distance is bounded between 0 and 1 when using base=2.
@@ -475,7 +798,8 @@ def compute_js_similarity(original_data: np.ndarray, synthetic_data: np.ndarray)
 
     # 6. Return the average similarity across all features
     return np.mean(js_similarities)
-
+    
+    
 
 def compute_basic_stats(original: np.ndarray, synthetic: np.ndarray):
     """
@@ -551,32 +875,38 @@ def evaluate_generation(original: np.ndarray, synthetic: np.ndarray, num_numeric
     for stat_type in ['mean', 'median', 'var']:
         scores[stat_type] = calculate_score(basic_stats, stat_type)
     stats = {}
+    distance_parameters = {
+        "original": np.asarray(original),
+        "synthetic": np.asarray(synthetic),
+        "num_numerical_features": num_numerical_features,
+        "category_sizes": category_sizes,
+        "task_type": task_type
+    }
     stats["wasserstein_distance_numerical"] = compute_wasserstein_distance(np.asarray(original[:,:num_numerical_features]), np.asarray(synthetic[:,:num_numerical_features]))
     stats["js_similarity_categorical"] = compute_js_similarity(np.asarray(original[:, num_numerical_features:]), np.asarray(synthetic[:, num_numerical_features:]))
     stats["correlation_pearson"] = correlation_similarity(np.asarray(original), np.asarray(synthetic), CorrelationMethod.PEARSON)
     stats["correlation_spearman"] = correlation_similarity(np.asarray(original), np.asarray(synthetic), CorrelationMethod.SPEARMAN)
     print("Finished computing correlation similarities.")
-    stats["dcr_all_euclidean"] = compute_dcr(np.asarray(original), np.asarray(synthetic), num_numerical_features=num_numerical_features, category_sizes=category_sizes, task_type=task_type, distance_metric='euclidean')
+    stats["dcr_euclidean"] = compute_dcr(**distance_parameters, distance_metric='euclidean')
     print("Finished computing DCR.")
-    stats["nndr_euclidean"] = compute_nndr(np.asarray(original), np.asarray(synthetic), num_numerical_features=num_numerical_features, category_sizes=category_sizes, task_type=task_type, distance_metric='euclidean')
-    stats["nndr_cosine"] = compute_nndr(np.asarray(original), np.asarray(synthetic), distance_metric='cosine')
+    stats["nndr_euclidean"] = compute_nndr(**distance_parameters, distance_metric='euclidean')
+    stats["nndr_cosine"] = compute_nndr(**distance_parameters, distance_metric='cosine')
     print("Finished computing NNDR.")
 
     gc.collect()
     
     print("Starting to compute Gower's distance.")
-    gower_matrix= compute_gowers_distance(np.asarray(original), np.asarray(synthetic), num_numerical_features, task_type, category_sizes)
+    gower_matrix = compute_gowers_distance(**distance_parameters)
     stats["gower_distance"] = np.mean(gower_matrix)
-    stats["dcr_gower"] = np.min(gower_matrix)
+    stats["dcr_gower_distance"] = np.mean(np.min(gower_matrix, axis=1))
     print("Finished computing Gower's distance.")
     
     return stats, scores
 
-def evaluate_privacy_main(args):
-    raw_config = lib.load_config(args.config)
+def evaluate_privacy_main(raw_config, ml_res, elapsed_time):
     N = raw_config['num_numerical_features']
     x_real, x_fake, target_size, task_type = load_data(raw_config['real_data_path'], raw_config['parent_dir'])
-    dataset_info = lib.load_json(os.path.join(raw_config['parent_dir'], 'DatasetInfo.json'))
+    dataset_info = generate_dataset_info(raw_config['real_data_path'])
     dataset_info["category_sizes"].append(target_size)
     print(f"Dataset_info: {dataset_info}\nnum_numerical_features: {N}\ntask_type: {task_type}\ncategory_sizes: {dataset_info['category_sizes']}")
     print(f"x_real shape: {x_real.shape}, x_fake shape: {x_fake.shape}")
@@ -591,6 +921,22 @@ def evaluate_privacy_main(args):
         for key, value in scores.items():
             file.write(f"{key}: {value}\n")
         file.write("Statistics computed column-wise, then average is taken.\n")    
+        
+        file.write(f"\nMachine Learning Evaluation Results:\n")
+        file.write(f"{ml_res.get_metrics()}\n")
+        
+        minutes, seconds = divmod(elapsed_time, 60)
+        file.write(f"\nTotal training time: {int(minutes)} min {seconds:.2f} sec\n")
+        
+        
+
+
+def write_ml_to_eval_file(eval_file_path, ml_results: dict):    
+    with open(eval_file_path, 'a') as file:
+        file.write(f"\nMachine Learning Evaluation Results:\n")
+        for key, value in ml_results.items():
+            file.write(f"{key}: {value}\n")
+            
 
 def main():
     
@@ -603,7 +949,8 @@ def main():
     parser.add_argument('--change_val', action='store_true',  default=False)
 
     args = parser.parse_args()
-    evaluate_privacy_main(args)
+    raw_config = lib.load_config(args.config)
+    evaluate_privacy_main(raw_config, ml_res={}, elapsed_time=0.0)
     
         
     

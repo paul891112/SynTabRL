@@ -13,6 +13,7 @@ parser.add_argument('device', type=str)
 
 args = parser.parse_args()
 data_path = Path(f"data/{args.ds_name}")
+print(f"Dataset path: {data_path}")
 best_params = None
 
 assert args.tune_type in ("cv", "val")

@@ -102,6 +102,10 @@ class GaussianMultinomialDiffusion(torch.nn.Module):
         self.num_timesteps = num_timesteps
         self.parametrization = parametrization
         self.scheduler = scheduler
+        self.dcr_weight = torch.nn.Parameter(torch.tensor(1.0), requires_grad=True)  # Added a learnable weight for privacy loss, applied in train.py
+        self.nndr_weight = torch.nn.Parameter(torch.tensor(1.0), requires_grad=True)  # Added a learnable weight for nndr loss, applied in train.py
+        self.gower_weight = torch.nn.Parameter(torch.tensor(1.0), requires_grad=True)  # Added a learnable weight for gower loss, applied in train.py
+        self.sum_weight = torch.nn.Parameter(torch.tensor(1.0), requires_grad=True)  # Added a learnable weight for sum loss, applied in train.py
 
         alphas = 1. - get_named_beta_schedule(scheduler, num_timesteps)
         alphas = torch.tensor(alphas.astype('float64'))
@@ -590,7 +594,7 @@ class GaussianMultinomialDiffusion(torch.nn.Module):
             return -loss
         
     
-    def mixed_loss(self, x, out_dict, privacy_metric="nndr"):
+    def mixed_loss(self, x, out_dict, privacy_metric="dcr", loss_memory=None, weight_mask=None):
         b = x.shape[0]
         device = x.device
         t, pt = self.sample_time(b, device, 'uniform')
@@ -618,22 +622,33 @@ class GaussianMultinomialDiffusion(torch.nn.Module):
         model_out_num = model_out[:, :self.num_numerical_features]
         model_out_cat = model_out[:, self.num_numerical_features:]
 
-        loss_multi = torch.zeros((1,)).float()
-        loss_gauss = torch.zeros((1,)).float()
-        loss_privacy_num = torch.zeros((1,)).float()
-        loss_privacy_cat = torch.zeros((1,)).float()
+       # Modification, preallocate GPU tensor ressources, only called when using _run_step_privacy(), clean memory at start of each step
+        if loss_memory:  
+            loss_multi, loss_gauss, loss_privacy_num, loss_privacy_cat = loss_memory
+            loss_multi.zero_()
+            loss_gauss.zero_()
+            loss_privacy_num.zero_()
+            loss_privacy_cat.zero_()
+            
+        else:  # Original TabDDPM
+            loss_multi = torch.zeros((1,)).float()
+            loss_gauss = torch.zeros((1,)).float()
+            loss_privacy_num = torch.zeros((1,)).float()
+            loss_privacy_cat = torch.zeros((1,)).float()
         
         # Import PRIVACY_FUNCTIONS from privacy.py to compute different types of privacy losses
         if x_cat.shape[1] > 0:
             loss_multi = self._multinomial_loss(model_out_cat, log_x_cat, log_x_cat_t, t, pt, out_dict) / len(self.num_classes)
             # loss_privacy_cat = categorical_privacy_loss(log_x_cat, model_out_cat, len(self.num_classes), self.num_classes)
-            loss_privacy_cat = PRIVACY_FUNCTIONS[f"{privacy_metric}_cat_loss"](log_x_cat, model_out_cat, len(self.num_classes), self.num_classes)  # PRIVACY_FUNCTIONS return value already called .mean()
+            
+            loss_privacy_cat = PRIVACY_FUNCTIONS[f"{privacy_metric}_cat_loss"](log_x_cat, model_out_cat, len(self.num_classes), self.num_classes, weights=weight_mask)  # PRIVACY_FUNCTIONS return value already called .mean()
         
         if x_num.shape[1] > 0:
             loss_gauss = self._gaussian_loss(model_out_num, x_num, x_num_t, t, noise)
-            loss_privacy_num = PRIVACY_FUNCTIONS[f"{privacy_metric}_num_loss"](x_num, model_out_num)  # PRIVACY_FUNCTIONS return value already called .mean()
+            loss_privacy_num = PRIVACY_FUNCTIONS[f"{privacy_metric}_num_loss"](x_num, model_out_num, weights=weight_mask)  # PRIVACY_FUNCTIONS return value already called .mean()
             
         return loss_multi.mean(), loss_gauss.mean(), loss_privacy_cat, loss_privacy_num
+    
     
     @torch.no_grad()
     def mixed_elbo(self, x0, out_dict):
@@ -969,12 +984,99 @@ class GaussianMultinomialDiffusion(torch.nn.Module):
         sample = torch.cat([z_norm, z_cat], dim=1).cpu()
         return sample, out_dict
     
-    def sample_all(self, num_samples, batch_size, y_dist, ddim=False):
-        if ddim:
-            print('Sample using DDIM.')
-            sample_fn = self.sample_ddim
+    def sample_ddim_with_grad(self, num_samples, y_dist):
+        b = num_samples
+        device = self.log_alpha.device
+        z_norm = torch.randn((b, self.num_numerical_features), device=device)
+
+        has_cat = self.num_classes[0] != 0
+        log_z = torch.zeros((b, 0), device=device).float()
+        if has_cat:
+            uniform_logits = torch.zeros((b, len(self.num_classes_expanded)), device=device)
+            log_z = self.log_sample_categorical(uniform_logits)
+
+        y = torch.multinomial(
+            y_dist,
+            num_samples=b,
+            replacement=True
+        )
+        out_dict = {'y': y.long().to(device)}
+        for i in reversed(range(0, self.num_timesteps)):
+            print(f'Sample timestep {i:4d}', end='\r')
+            t = torch.full((b,), i, device=device, dtype=torch.long)
+            model_out = self._denoise_fn(
+                torch.cat([z_norm, log_z], dim=1).float(),
+                t,
+                **out_dict
+            )
+            model_out_num = model_out[:, :self.num_numerical_features]
+            model_out_cat = model_out[:, self.num_numerical_features:]
+            z_norm = self.gaussian_ddim_step(model_out_num, z_norm, t, clip_denoised=False)
+            if has_cat:
+                log_z = self.multinomial_ddim_step(model_out_cat, log_z, t, out_dict)
+
+        print()
+        z_ohe = torch.exp(log_z).round()
+        z_cat = log_z
+        if has_cat:
+            z_cat = ohe_to_categories(z_ohe, self.num_classes)
+        sample = torch.cat([z_norm, z_cat], dim=1).cpu()
+        return sample, out_dict
+    
+
+    def sample_with_grad(self, num_samples, y_dist):
+        b = num_samples
+        device = self.log_alpha.device
+        z_norm = torch.randn((b, self.num_numerical_features), device=device)
+
+        has_cat = self.num_classes[0] != 0
+        log_z = torch.zeros((b, 0), device=device).float()
+        if has_cat:
+            uniform_logits = torch.zeros((b, len(self.num_classes_expanded)), device=device)
+            log_z = self.log_sample_categorical(uniform_logits)
+
+        y = torch.multinomial(
+            y_dist,
+            num_samples=b,
+            replacement=True
+        )
+        out_dict = {'y': y.long().to(device)}
+        for i in reversed(range(0, self.num_timesteps)):
+            print(f'Sample timestep {i:4d}', end='\r')
+            t = torch.full((b,), i, device=device, dtype=torch.long)
+            model_out = self._denoise_fn(
+                torch.cat([z_norm, log_z], dim=1).float(),
+                t,
+                **out_dict
+            )
+            model_out_num = model_out[:, :self.num_numerical_features]
+            model_out_cat = model_out[:, self.num_numerical_features:]
+            z_norm = self.gaussian_p_sample(model_out_num, z_norm, t, clip_denoised=False)['sample']
+            if has_cat:
+                log_z = self.p_sample(model_out_cat, log_z, t, out_dict)
+
+        print()
+        z_ohe = torch.exp(log_z).round()
+        z_cat = log_z
+        if has_cat:
+            z_cat = ohe_to_categories(z_ohe, self.num_classes)
+        sample = torch.cat([z_norm, z_cat], dim=1).cpu()
+        return sample, out_dict
+    
+    def sample_all(self, num_samples, batch_size, y_dist, ddim=False, require_grad=False):
+        if require_grad:
+            print(f"Sampling with gradients, in GaussionMultinomialDiffusion.sample_all()")
+            if ddim:
+                print('Sample using DDIM .')
+                sample_fn = self.sample_ddim_with_grad
+            else:
+                sample_fn = self.sample_with_grad
         else:
-            sample_fn = self.sample
+            if ddim:
+                print('Sample using DDIM.')
+                sample_fn = self.sample_ddim
+            else:
+                sample_fn = self.sample
         
         b = batch_size
 

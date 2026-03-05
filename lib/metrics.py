@@ -62,6 +62,13 @@ class MetricsReport:
         print(res["test"])
 
         return res
+    
+    def get_metrics(self) -> dict:
+        res = {
+            "val": {k: np.around(self._res["val"][k], 4) for k in self._res["val"]},
+            "test": {k: np.around(self._res["test"][k], 4) for k in self._res["test"]}
+        }
+        return res
 
 class SeedsMetricsReport:
     def __init__(self):

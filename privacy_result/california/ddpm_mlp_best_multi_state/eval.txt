@@ -1,7 +1,16 @@
-Training time: 234.64757299423218 seconds
-Sampling time: 15.460812091827393 seconds
-Evaluation time: 0 seconds
-Total elapsed time: 0:04:22
-Numerical Data Stats and Scores:
-{'wasserstein_distance_numerical': 0.0022538117400268277, 'js_similarity_categorical': 0.9993121089445506, 'correlation_pearson': 0.9751217042778683, 'correlation_spearman': 0.9971696033356834, 'dcr_all_euclidean': 0.05095802394884987, 'dcr_numerical_euclidean': 0.037700737681475215, 'dcr_categorical_hamming': 0.9957954545454546, 'nndr_euclidean': 0.8541117743430632, 'nndr_cosine': 0.7333892457309688}
-{'mean': 0.001629663550005604, 'median': 0.0011790666876238484, 'var': 0.0007393930663410896}
+Similarity and Privacy evaluation
+wasserstein_distance_numerical: 0.00467973077225416
+js_similarity_categorical: 0.9932081642998647
+correlation_pearson: 0.9736390363165061
+correlation_spearman: 0.9917251504937187
+dcr_all_euclidean: 0.05039586507123532
+nndr_euclidean: 0.8379522438071124
+nndr_cosine: 0.7166714260664425
+gower_distance: 0.12190485070886549
+dcr_gower: 0.0011265500515305169
+
+Absolute Difference of Basic Statistics:
+mean: 0.003983570142874659
+median: 0.001211452150836356
+var: 0.001755424696956138
+Statistics computed column-wise, then average is taken.
