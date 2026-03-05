@@ -130,6 +130,7 @@ def sample(
         # _, _, cat_encoder = lib.cat_encode({'train': X_cat_real}, T_dict['cat_encoding'], y_real, T_dict['seed'], True)
         if T_dict['cat_encoding'] == 'one-hot':
             X_gen[:, num_numerical_features:] = to_good_ohe(D.cat_transform.steps[0][1], X_num_[:, num_numerical_features:])
+        print("Cat shape: ", X_gen[:, num_numerical_features:].shape)
         X_cat = D.cat_transform.inverse_transform(X_gen[:, num_numerical_features:])
     else:
         X_cat = None

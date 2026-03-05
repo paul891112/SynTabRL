@@ -1,0 +1,14 @@
+{
+    "task_type": "multiclass",
+    "n_classes": 3,
+    "n_num_features": 4,
+    "n_cat_features": 5,
+    "training_completed": true,
+    "category_sizes": [
+        3,
+        56,
+        19,
+        10,
+        4
+    ]
+}

@@ -115,5 +115,26 @@
         "general_columns": ["26", "36"],
         "integer_columns": [],
         "problem_type": {"Regression": "y"}
+    },
+    "loan": {
+        "categorical_columns": ["8", "9", "10", "11", "12", "y"],
+        "mixed_columns": {},
+        "general_columns": ["0", "1", "2", "5", "6", "7"],
+        "integer_columns": ["0", "2"],
+        "problem_type": {"Classification": "y"}
+    },
+    "bike": {
+        "categorical_columns": ["5","6", "7", "8", "9", "10", "11", "12"],
+        "mixed_columns": {},
+        "general_columns": ["1", "2"],
+        "integer_columns": ["0"],
+        "problem_type": {"Regression": "y"}
+    },
+    "winequality": {
+        "categorical_columns": [],
+        "mixed_columns": {},
+        "integer_columns": ["5", "6"],
+        "general_columns": [],
+        "problem_type": {"Regression": "y"}
     }
 }

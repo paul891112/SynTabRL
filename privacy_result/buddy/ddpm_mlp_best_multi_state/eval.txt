@@ -1,16 +1,16 @@
 Similarity and Privacy evaluation
-wasserstein_distance_numerical: 0.007732317947939169
-js_similarity_categorical: 0.9905115520167614
-correlation_pearson: 0.9951569000540538
-correlation_spearman: 0.9879166944593595
-dcr_all_euclidean: 0.09140414538947393
-nndr_euclidean: 0.8133254975400432
-nndr_cosine: 0.6072959478342943
-gower_distance: 0.4933487982452458
-dcr_gower: 0.002532809737457864
+wasserstein_distance_numerical: 0.00825681533905558
+js_similarity_categorical: 0.9906522995105448
+correlation_pearson: 0.9953384158071369
+correlation_spearman: 0.9867883119834105
+dcr_all_euclidean: 0.0881493814706898
+nndr_euclidean: 0.8081383290887895
+nndr_cosine: 0.6748940034386168
+gower_distance: 0.4908409024859008
+dcr_gower: 0.002790404829066895
 
 Absolute Difference of Basic Statistics:
-mean: 0.002547991539560946
-median: 0.00030653540473870217
-var: 0.0010492146523940038
+mean: 0.0029033138516367974
+median: 8.252881134232981e-05
+var: 0.0012468647388291488
 Statistics computed column-wise, then average is taken.

@@ -3,7 +3,7 @@ parent_dir = "privacy_result/california/ddpm_mlp_best_multi_state"
 real_data_path = "data/california/"
 num_numerical_features = 8
 model_type = "mlp"
-device = "cuda:1"
+device = "cuda:0"
 evaluation_file = "eval.txt"
 
 [model_params]
@@ -30,7 +30,6 @@ gaussian_loss_type = "mse"
 
 [train.main]
 steps = 20000
-start_privacy_step = 0
 lr = 0.0028386514632022476
 weight_decay = 0.0
 batch_size = 4096
@@ -61,8 +60,3 @@ cat_nan_policy = "__none__"
 cat_min_frequency = "__none__"
 cat_encoding = "one-hot"
 y_policy = "default"
-
-[privacy.config]
-dcr = 0.3
-nndr = 0.6
-gower = 0.2

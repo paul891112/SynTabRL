@@ -56,7 +56,7 @@ cat_min_frequency = "__none__"
 cat_encoding = "one-hot"
 y_policy = "default"
 
-[privacy.config]
+[privacy_config]
 dcr = 0.3
 nndr = 0.6
 gower = 0.3

@@ -1,0 +1,17 @@
+Generating 5000 samples for evaluation.
+Filtering method: percentile with value: 0.1
+
+Metrics before filtering:
+dcr: 2.7205407054732387
+nndr: 0.9629088123845847
+gower: 0.04731760504085307
+
+Metrics after filtering:
+dcr: 2.7541506959374646
+nndr: 0.9697051828576198
+gower: 0.4601385857867014
+
+Relative gain in privacy metrics (after/before) in %:
+dcr: 1.2354%
+nndr: 0.7058%
+gower: 872.4469%

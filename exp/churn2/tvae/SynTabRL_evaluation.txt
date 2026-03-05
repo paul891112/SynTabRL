@@ -1,0 +1,21 @@
+Similarity and Privacy evaluation
+wasserstein_distance_numerical: 0.034610017623808796
+js_similarity_categorical: 0.9927574619033565
+correlation_pearson: 0.9889221459367837
+correlation_spearman: 0.9852697925637575
+dcr_euclidean: 0.2205236440685327
+nndr_euclidean: 0.8389470479354274
+nndr_cosine: 0.7161798834113534
+gower_distance: 0.33652251242155645
+dcr_gower_distance: 0.04904688240610597
+
+Absolute Difference of Basic Statistics:
+mean: 0.0133582354570998
+median: 0.006361498204270294
+var: 0.0052976355960492084
+Statistics computed column-wise, then average is taken.
+
+Machine Learning Evaluation Results:
+See results_catboost.json
+
+Total training, sampling and evaluation time: 4 min 55.57 sec

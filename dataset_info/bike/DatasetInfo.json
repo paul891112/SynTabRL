@@ -1,0 +1,16 @@
+{
+    "task_type": "regression",
+    "n_classes": null,
+    "n_num_features": 5,
+    "n_cat_features": 8,
+    "category_sizes": [
+        4,
+        2,
+        12,
+        24,
+        2,
+        7,
+        2,
+        4
+    ]
+}

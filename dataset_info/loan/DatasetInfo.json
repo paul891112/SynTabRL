@@ -1,0 +1,13 @@
+{
+    "task_type": "binclass",
+    "n_classes": null,
+    "n_num_features": 8,
+    "n_cat_features": 5,
+    "category_sizes": [
+        2,
+        5,
+        4,
+        6,
+        2
+    ]
+}
