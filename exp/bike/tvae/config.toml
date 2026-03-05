@@ -1,0 +1,36 @@
+parent_dir = "exp/bike/tvae/"
+real_data_path = "data/bike"
+seed = 0
+device = "cuda:0"
+
+[train_params]
+lr = 0.0009619096578754934
+epochs = 5000
+embedding_dim = 64
+batch_size = 256
+loss_factor = 2.8206176525222655
+compress_dims = [
+    256,
+    256,
+]
+decompress_dims = [
+    256,
+    256,
+]
+
+[sample]
+seed = 0
+num_samples = 22244
+
+[eval.type]
+eval_model = "catboost"
+eval_type = "synthetic"
+
+[eval.T]
+seed = 0
+normalization = "__none__"
+num_nan_policy = "__none__"
+cat_nan_policy = "__none__"
+cat_min_frequency = "__none__"
+cat_encoding = "__none__"
+y_policy = "default"

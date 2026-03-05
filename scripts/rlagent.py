@@ -25,7 +25,7 @@ from sklearn.preprocessing import MinMaxScaler, OneHotEncoder
 from scipy.stats import wasserstein_distance
 from enum import Enum
 import time
-import pathlib
+from pathlib import Path
 import gc
 from datasetinfo import generate_dataset_info
 
@@ -101,7 +101,7 @@ class RLAgent:
         
         # self.privacy_metric = self.raw_config['privacy_metric'] if ('privacy_metric' in self.raw_config and self.raw_config['privacy_metric'] in PRIVACY_CONFIG_DICT.keys()) else DEFAULT_PRIVACY_METRIC
         self.privacy_threshold = self.load_privacy_config()
-        self.evaluation_file = self.raw_config['evaluation_file'] if 'evaluation_file' in self.raw_config else "eval.txt"
+        self.evaluation_file = self.raw_config['evaluation_file'] if ('evaluation_file' in self.raw_config) and (self.raw_config['evaluation_file'].endswith(".json")) else "SynTabRL_eval.json"
         
         self.steps_per_round = self.raw_config['train']['main']['steps_per_round '] if 'steps_per_round' in self.raw_config['train']['main'] else 1000
         if self.raw_config['train']['main']['steps'] % self.steps_per_round != 0:
@@ -118,6 +118,14 @@ class RLAgent:
         self.privacy_discount = self.raw_config['train']['main']['privacy_discount']
         
         self.logsumexp_sigma = self.raw_config['train']['main']['logsumexp_sigma'] if 'logsumexp_sigma' in self.raw_config['train']['main'] else 0.01
+        
+        # Load real data for initial training and evaluation
+        self.mm, self.ohe, self.X_num_real, self.X_cat_real = None, None, None, None    # X_cat_real is the onehot encoded categorical features of real data
+        # Load real data with currently fitted mm and ohe if available
+        extra_info = generate_dataset_info(real_data_path=self.raw_config['real_data_path'], change_val=self.args.change_val)  # generates DatasetInfo and saves to dataset_info folder if not already exists
+
+        self.real_data, self.target_size, self.dataset_info = self.load_real_data(self.raw_config['real_data_path'])  # loads
+        self.real_data = np.asarray(self.real_data)
         
         # Load real data for initial training and evaluation
         self.mm, self.ohe, self.X_num_real, self.X_cat_real = None, None, None, None    # X_cat_real is the onehot encoded categorical features of real data
@@ -399,7 +407,7 @@ class RLAgent:
             self.save_checkpoint()
             et = time.time()
             print(f"Round {counter} training time: {et-st}s")
-        X_num, X_cat, y_gen = self.generate_samples()
+        X_num, X_cat, y_gen = self.generate_samples(self.evaluation_samples)
         final_state = self.evaluate_state(X_num, X_cat, y_gen)
         self.remove_checkpoint()
             
@@ -765,14 +773,21 @@ class RLAgent:
         return eval_metrics
 
         
-    def evaluate_generation(self, elapsed_time=None):
+    def evaluate_generation(self, elapsed_time=None, X_num=None, X_cat=None, y_gen=None):
         """
         Generates final evaluation of the trained model using all available samples.
         """
-        X_num, X_cat, y_gen = self.generate_samples(self.raw_config['sample']['num_samples'])
+        if y_gen is None:
+            X_num, X_cat, y_gen = self.generate_samples(self.raw_config['sample']['num_samples'])
         synthetic_data = self.load_fake_data(X_num, X_cat, y_gen)
         stats, scores = evaluate_generation(synthetic=synthetic_data, original=self.real_data, num_numerical_features=self.raw_config['num_numerical_features'], category_sizes=self.category_sizes, task_type=self.task_type)
         res = self.evaluate_ml()
+        
+        eval_result = stats | scores | res
+        eval_result["elapsed_time"] = elapsed_time
+        eval_path = str(Path(self.raw_config['parent_dir']) / self.evaluation_file)
+        lib.dump_json(eval_result, eval_path)
+        """
         with open(os.path.join(self.raw_config['parent_dir'], self.evaluation_file), 'w') as file:
             
             file.write(f"Similarity and Privacy evaluation\n")
@@ -790,12 +805,12 @@ class RLAgent:
                 minutes, seconds = divmod(elapsed_time, 60)
                 print(f"Total training time: {int(minutes)} min {seconds:.2f} sec")
                 file.write(f"\nTotal training time: {int(minutes)} min {seconds:.2f} sec\n")
+        """
         
         
-        
-    def generate_samples(self, num_samples=None, **kwargs):
-        """Generates 5000 samples using the current model and configuration."""
-        num_samples = num_samples if num_samples else self.evaluation_samples
+    def generate_samples(self, num_samples=5000, **kwargs):
+        """Generates samples using the current model and configuration. 2000 by default"""
+        num_samples = num_samples
         return sample(
             num_samples=num_samples,
             batch_size=self.raw_config['sample']['batch_size'],
@@ -1317,46 +1332,20 @@ def main():
             args.sample = agent.raw_config['sample']['num_samples']
 
         X_num, X_cat, y_gen = sample_method(num_samples=args.sample, value=args.filter_value)
+        
+        """
         if X_num is not None:
             print(f"Generated samples: X_num shape {X_num.shape}") 
         if X_cat is not None:    
-            print(f"Generated samples: X_cat shape {X_cat.shape}")
+          print(f"Generated samples: X_cat shape {X_cat.shape}")
         print(f"Generated samples: y_gen shape {y_gen.shape}")
         
         print(f"X_num type: {type(X_num)}, X_cat type: {type(X_cat)}, y_gen type: {type(y_gen)}")
+        """
         
     if args.eval:
-        # ----- Adopted from pipeline.py (Hyperparameter Tuning) -----
-        if raw_config['eval']['type']['eval_model'] == 'catboost':
-            train_catboost(
-                parent_dir=raw_config['parent_dir'],
-                real_data_path=raw_config['real_data_path'],
-                eval_type=raw_config['eval']['type']['eval_type'],
-                T_dict=raw_config['eval']['T'],
-                seed=raw_config['seed'],
-                change_val=args.change_val
-            )
-        elif raw_config['eval']['type']['eval_model'] == 'mlp':
-            train_mlp(
-                parent_dir=raw_config['parent_dir'],
-                real_data_path=raw_config['real_data_path'],
-                eval_type=raw_config['eval']['type']['eval_type'],
-                T_dict=raw_config['eval']['T'],
-                seed=raw_config['seed'],
-                change_val=args.change_val,
-                device=device
-            )
-        elif raw_config['eval']['type']['eval_model'] == 'simple':
-            train_simple(
-                parent_dir=raw_config['parent_dir'],
-                real_data_path=raw_config['real_data_path'],
-                eval_type=raw_config['eval']['type']['eval_type'],
-                T_dict=raw_config['eval']['T'],
-                seed=raw_config['seed'],
-                change_val=args.change_val
-            )
-        # -------------------------------------
-
+        agent.evaluate_generation(X_num=X_num, X_cat=X_cat, y_gen=y_gen)
+        
     
 if __name__ == '__main__':
     main()
