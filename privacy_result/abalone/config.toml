@@ -1,5 +1,5 @@
 seed = 0
-parent_dir = "exp/abalone/check"
+parent_dir = "privacy_result/abalone/check"
 real_data_path = "data/abalone/"
 model_type = "mlp"
 num_numerical_features = 7
@@ -12,20 +12,19 @@ num_classes = 0
 
 [model_params.rtdl_params]
 d_layers = [
-    256,
-    256,
+    512,
+    128,
 ]
 dropout = 0.0
 
 [diffusion_params]
-num_timesteps = 1000
+num_timesteps = 100
 gaussian_loss_type = "mse"
-scheduler = "cosine"
 
 [train.main]
-steps = 1000
-lr = 0.001
-weight_decay = 1e-05
+steps = 30000
+lr = 0.0003442062504112041
+weight_decay = 0.0
 batch_size = 4096
 
 [train.T]
