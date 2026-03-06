@@ -192,18 +192,31 @@ study = optuna.create_study(
     sampler=optuna.samplers.TPESampler(seed=0),
 )
 
-study.optimize(objective, n_trials=30, show_progress_bar=True)
+study.optimize(objective, n_trials=20, show_progress_bar=True)
 
-best_config_path = parent_path / f'{prefix}_best/config.toml'
-best_config = study.best_trial.user_attrs['config']
-best_config["parent_dir"] = str(parent_path / f'{prefix}_best/')
+best_ml_config_path = parent_path / f'{prefix}_best_ML/config.toml'
+best_privacy_config_path = parent_path / f'{prefix}_best_privacy/config.toml'
 
-os.makedirs(parent_path / f'{prefix}_best', exist_ok=True)
-lib.dump_config(best_config, best_config_path)
-lib.dump_json(optuna.importance.get_param_importances(study), parent_path / f'{prefix}_best/importance.json')
+trial_with_highest_ML = max(study.best_trials, key=lambda t: t.values[0])
+trial_with_highest_privacy = max(study.best_trials, key=lambda t: t.values[1])
 
-subprocess.run(['python3.9', f'{pipeline}', '--config', f'{best_config_path}', '--train', '--sample'], check=True)
+
+best_config = trial_with_highest_ML.user_attrs['config']
+best_config["parent_dir"] = str(parent_path / f'{prefix}_best_ML/')
+best_privacy_config = trial_with_highest_privacy.user_attrs['config']
+best_privacy_config["parent_dir"] = str(parent_path / f'{prefix}_best_privacy/')
+
+os.makedirs(parent_path / f'{prefix}_best_ML', exist_ok=True)
+os.makedirs(parent_path / f'{prefix}_best_privacy', exist_ok=True)
+lib.dump_config(best_config, best_ml_config_path)
+lib.dump_config(best_privacy_config, best_privacy_config_path)
+lib.dump_json(optuna.importance.get_param_importances(study, target=lambda t: t.values[0]), parent_path / f'{prefix}_best_ML/importance.json')
+lib.dump_json(optuna.importance.get_param_importances(study, target=lambda t: t.values[1]), parent_path / f'{prefix}_best_privacy/importance.json')
+
+
+subprocess.run(['python3.9', f'{pipeline}', '--config', f'{best_ml_config_path}', '--train', '--sample', '--eval'], check=True)
 
 if args.eval_seeds:
     best_exp = str(parent_path / f'{prefix}_best/config.toml')
     subprocess.run(['python3.9', f'{eval_seeds}', '--config', f'{best_exp}', '10', "ddpm", eval_type, args.eval_model, '5'], check=True)
+    
