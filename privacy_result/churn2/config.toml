@@ -54,3 +54,8 @@ cat_nan_policy = "__none__"
 cat_min_frequency = "__none__"
 cat_encoding = "__none__"
 y_policy = "default"
+
+[privacy_config]
+dcr = 0.2
+nndr = 0.85
+gower = 0.1

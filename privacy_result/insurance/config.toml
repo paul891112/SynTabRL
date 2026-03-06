@@ -1,12 +1,12 @@
 seed = 0
-parent_dir = "exp/california/check"
-real_data_path = "data/california/"
-num_numerical_features = 8
+parent_dir = "exp/insurance/check"
+real_data_path = "data/insurance/"
+num_numerical_features = 3
 model_type = "mlp"
-device = "cuda:1"
+device = "cuda:0"
 
 [model_params]
-d_in = 9
+d_in = 12
 num_classes = 0
 is_y_cond = false
 
@@ -38,13 +38,14 @@ cat_encoding = "__none__"
 y_policy = "default"
 
 [sample]
-num_samples = 52800
-batch_size = 8192
+num_samples = 7200
+batch_size = 10000
 seed = 0
 
 [eval.type]
 eval_model = "catboost"
 eval_type = "synthetic"
+model = "catboost"
 
 [eval.T]
 seed = 0

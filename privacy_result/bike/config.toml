@@ -1,14 +1,14 @@
 seed = 0
-parent_dir = "exp/california/check"
-real_data_path = "data/california/"
-num_numerical_features = 8
+parent_dir = "exp/bike/check"
+real_data_path = "data/bike/"
 model_type = "mlp"
-device = "cuda:1"
+num_numerical_features = 5
+device = "cuda:0"
 
 [model_params]
-d_in = 9
-num_classes = 0
 is_y_cond = false
+d_in = 11
+num_classes = 0
 
 [model_params.rtdl_params]
 d_layers = [
@@ -38,8 +38,8 @@ cat_encoding = "__none__"
 y_policy = "default"
 
 [sample]
-num_samples = 52800
-batch_size = 8192
+num_samples = 20800
+batch_size = 10000
 seed = 0
 
 [eval.type]

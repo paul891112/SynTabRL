@@ -1,5 +1,5 @@
 seed = 0
-parent_dir = "privacy_result/california/many-exps/0"
+parent_dir = "privacy_result/california/many-exps/1"
 real_data_path = "data/california/"
 num_numerical_features = 8
 model_type = "mlp"
@@ -12,12 +12,14 @@ is_y_cond = false
 
 [model_params.rtdl_params]
 d_layers = [
-    512,
-    512,
-    512,
-    512,
-    512,
-    512,
+    1024,
+    1024,
+    1024,
+    1024,
+    1024,
+    1024,
+    1024,
+    1024,
 ]
 dropout = 0.0
 
@@ -32,8 +34,8 @@ lr = 0.0013275991211473216
 weight_decay = 0.0
 batch_size = 4096
 evaluation_file = "SynTabRL_eval.json"
-pretrain_steps = 4000
-privacy_discount = 0.1
+pretrain_steps = 2000
+privacy_discount = 0.01
 logsumexp_sigma = 0.01
 
 [train.T]
@@ -64,6 +66,6 @@ cat_encoding = "__none__"
 y_policy = "default"
 
 [privacy_config]
-dcr = 0.3
-nndr = 0.8
-gower = 0.05
+dcr = 0.2
+nndr = 0.85
+gower = 0.1
