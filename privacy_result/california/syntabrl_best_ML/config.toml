@@ -1,5 +1,5 @@
 seed = 0
-parent_dir = "privacy_result/california/many-exps/1"
+parent_dir = "privacy_result/california/syntabrl_best_ML"
 real_data_path = "data/california/"
 num_numerical_features = 8
 model_type = "mlp"
@@ -50,7 +50,7 @@ y_policy = "default"
 [sample]
 num_samples = 52800
 batch_size = 8192
-seed = 0
+seed = 4
 
 [eval.type]
 eval_model = "catboost"
