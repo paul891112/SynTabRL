@@ -69,7 +69,9 @@ def load_data(real_path, fake_path):
     
     if X_cat_real is not None:
         # ohe = OneHotEncoder().fit(X_cat_real)
+        X_cat_real = X_cat_real.astype(str)
         combined_cat = np.concatenate([X_cat_real, X_cat_fake], axis=0)
+        
         ohe = OneHotEncoder(handle_unknown='ignore').fit(combined_cat)
         
         X_cat_real = ohe.transform(X_cat_real) / np.sqrt(2)

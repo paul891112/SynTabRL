@@ -1,0 +1,10 @@
+{
+    "name": "bike",
+    "id": "bike_sharing--id",
+    "task_type": "regression",
+    "n_num_features": 5,
+    "n_cat_features": 8,
+    "train_size": 11122,
+    "val_size": 2781,
+    "test_size": 3476
+}

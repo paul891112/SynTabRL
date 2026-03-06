@@ -114,8 +114,7 @@ class RLAgent:
         self.total_steps = self.raw_config['train']['main']['steps'] + self.pretrain_steps
         self.completed_steps = 0
         self.actual_training_steps = 0  # to keep track of actual training steps excluding pretraining steps, used for logging and checkpointing purposes
-        assert "privacy_discount" in self.raw_config['train']['main'], "Please specify a privacy_discount value in config.toml under [train.main] to indicate how much the privacy loss should be weighted compared to the conventional loss when the model is in low privacy state. Typically 0.1 to 0.01."
-        self.privacy_discount = self.raw_config['train']['main']['privacy_discount']
+        self.privacy_discount = self.raw_config['train']['main']['privacy_discount'] if "privacy_discount" in self.raw_config['train']['main'] else 0.1
         
         self.logsumexp_sigma = self.raw_config['train']['main']['logsumexp_sigma'] if 'logsumexp_sigma' in self.raw_config['train']['main'] else 0.01
         
@@ -783,7 +782,7 @@ class RLAgent:
         stats, scores = evaluate_generation(synthetic=synthetic_data, original=self.real_data, num_numerical_features=self.raw_config['num_numerical_features'], category_sizes=self.category_sizes, task_type=self.task_type)
         res = self.evaluate_ml()
         
-        eval_result = stats | scores | res
+        eval_result = stats | scores | res.get_metrics()
         eval_result["elapsed_time"] = elapsed_time
         eval_path = str(Path(self.raw_config['parent_dir']) / self.evaluation_file)
         lib.dump_json(eval_result, eval_path)
@@ -1319,6 +1318,7 @@ def main():
     # assert "evaluation_file" in raw_config, "evaluation_file key missing in config.toml"
     print("Starting agent ...")
     agent = RLAgent(name="RLAgent1", args=args, raw_config=raw_config, device=device)
+    X_num, X_cat, y_gen = None, None, None
     if args.train:
         agent.run_algorithm()
         
