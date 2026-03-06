@@ -28,7 +28,8 @@ assert eval_type in ('merged', 'synthetic')
 prefix = str(args.prefix)
 
 base_config_path = f'privacy_result/{ds_name}/config.toml'
-original_config_path = f'exp/{ds_name}/ddpm_cb_best/config.toml'
+original_config_path = f'exp/{ds_name}/ddpm_cb_best/config.toml'  
+# 06.03 original_config_path maybe not necessarey, I changed all privacy_result/dataset/config.toml to have same hyperparam as exp/dataset/ddpm_cb_best/config.toml
 parent_path = Path(f'privacy_result/{ds_name}/')
 exps_path = Path(f'privacy_result/{ds_name}/many-exps/')
 pipeline = f'scripts/rlagent.py'
@@ -71,12 +72,14 @@ def _suggest_mlp_layers(trial):
 def objective(trial):
     
     # Loading original TabDDPM config
+    # 06.03 Since ddpm_cb_best config is now in privacy_result/dataset/config.toml, this block is only to instantiate 
     original_config = lib.load_config(original_config_path)
     lr = original_config['train']['main']['lr']
     steps = original_config['train']['main']['steps']
     batch_size = original_config['train']['main']['batch_size']
     weight_decay = original_config['train']['main']['weight_decay']
-    d_layers = _suggest_mlp_layers(trial)
+    # d_layers = _suggest_mlp_layers(trial)
+    d_layers = original_config['model_params']['rtdl_params']['d_layers']
     eval_type = original_config['eval']['type']['eval_type']
     num_samples = original_config['sample']['num_samples']
     gaussian_loss_type = original_config['diffusion_params']['gaussian_loss_type']
@@ -92,7 +95,9 @@ def objective(trial):
     
     # Paul: add privacy parameter
     privacy_discount = trial.suggest_categorical('privacy_discount', [0.1, 0.05, 0.01])
-    dcr = trial.suggest_categorical('dcr', [0.2, 0.3])
+    
+    # Paul: Good value is dataset-specific, not known a priori, doesnt make much sense to hyperparametertune
+    dcr = trial.suggest_categorical('dcr', [0.2, 0.25, 0.3])
     nndr = trial.suggest_categorical('nndr', [0.8, 0.85])
     gower = trial.suggest_categorical('gower', [0.05, 0.1])
 
@@ -214,7 +219,7 @@ lib.dump_json(optuna.importance.get_param_importances(study, target=lambda t: t.
 lib.dump_json(optuna.importance.get_param_importances(study, target=lambda t: t.values[1]), parent_path / f'{prefix}_best_privacy/importance.json')
 
 
-subprocess.run(['python3.9', f'{pipeline}', '--config', f'{best_ml_config_path}', '--train', '--sample', '--eval'], check=True)
+subprocess.run(['python3.9', f'{pipeline}', '--config', f'{best_privacy_config_path}', '--train', '--sample', '--eval'], check=True)
 
 if args.eval_seeds:
     best_exp = str(parent_path / f'{prefix}_best/config.toml')
