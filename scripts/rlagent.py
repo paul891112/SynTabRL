@@ -783,7 +783,8 @@ class RLAgent:
         res = self.evaluate_ml()
         
         eval_result = stats | scores | res.get_metrics()
-        eval_result["elapsed_time"] = elapsed_time
+        minutes, seconds = divmod(elapsed_time, 60)
+        eval_result["elapsed_time"] = f"Total training time: {int(minutes)} min {seconds:.2f} sec"
         eval_path = str(Path(self.raw_config['parent_dir']) / self.evaluation_file)
         lib.dump_json(eval_result, eval_path)
         """
@@ -1319,6 +1320,7 @@ def main():
     print("Starting agent ...")
     agent = RLAgent(name="RLAgent1", args=args, raw_config=raw_config, device=device)
     X_num, X_cat, y_gen = None, None, None
+    st = time.time()
     if args.train:
         agent.run_algorithm()
         
@@ -1342,9 +1344,9 @@ def main():
         
         print(f"X_num type: {type(X_num)}, X_cat type: {type(X_cat)}, y_gen type: {type(y_gen)}")
         """
-        
-    if args.eval:
-        agent.evaluate_generation(X_num=X_num, X_cat=X_cat, y_gen=y_gen)
+    elapsed_time = time.time() - st    
+    if args.eval and not args.train:
+        agent.evaluate_generation(elapsed_time=elapsed_time, X_num=X_num, X_cat=X_cat, y_gen=y_gen)
         
     
 if __name__ == '__main__':

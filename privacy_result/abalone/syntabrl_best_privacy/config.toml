@@ -1,5 +1,5 @@
 seed = 0
-parent_dir = "privacy_result/abalone/many-exps/19"
+parent_dir = "privacy_result/abalone/syntabrl_best_privacy"
 real_data_path = "data/abalone/"
 model_type = "mlp"
 num_numerical_features = 7
@@ -28,7 +28,7 @@ weight_decay = 0.0
 batch_size = 4096
 evaluation_file = "SynTabRL_eval.json"
 pretrain_steps = 4000
-privacy_discount = 0.1
+privacy_discount = 0.01
 logsumexp_sigma = 0.01
 
 [train.T]

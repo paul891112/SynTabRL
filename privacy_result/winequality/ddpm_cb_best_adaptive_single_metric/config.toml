@@ -1,9 +1,10 @@
 seed = 0
-parent_dir = "privacy_result/winequality/ddpm_cb_best_no_privacy"
+parent_dir = "privacy_result/winequality/ddpm_cb_best_adaptive_single_metric"
 real_data_path = "data/winequality/"
 num_numerical_features = 11
 model_type = "mlp"
 device = "cuda:0"
+evaluation_file = "eval.txt"
 
 [model_params]
 d_in = 9
@@ -30,6 +31,7 @@ steps = 30000
 lr = 0.0013275991211473216
 weight_decay = 0.0
 batch_size = 4096
+privacy_discount = 0.1
 
 [train.T]
 seed = 0
@@ -57,3 +59,8 @@ cat_nan_policy = "__none__"
 cat_min_frequency = "__none__"
 cat_encoding = "__none__"
 y_policy = "default"
+
+[privacy_config]
+dcr = 0.2
+nndr = 0.9
+gower = 0.05

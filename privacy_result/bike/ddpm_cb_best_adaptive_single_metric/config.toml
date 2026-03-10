@@ -1,9 +1,10 @@
 seed = 0
-parent_dir = "privacy_result/abalone/many-exps/19"
-real_data_path = "data/abalone/"
+parent_dir = "privacy_result/bike/ddpm_cb_best_adaptive_single_metric"
+real_data_path = "data/bike/"
 model_type = "mlp"
-num_numerical_features = 7
+num_numerical_features = 5
 device = "cuda:0"
+evaluation_file = "SynTabRL_eval.txt"
 
 [model_params]
 is_y_cond = false
@@ -12,24 +13,26 @@ num_classes = 0
 
 [model_params.rtdl_params]
 d_layers = [
+    256,
+    1024,
+    1024,
+    1024,
+    1024,
     512,
-    128,
 ]
 dropout = 0.0
 
 [diffusion_params]
-num_timesteps = 100
+num_timesteps = 1000
 gaussian_loss_type = "mse"
+scheduler = "cosine"
 
 [train.main]
 steps = 30000
-lr = 0.0003442062504112041
+lr = 0.0004856603584605993
 weight_decay = 0.0
 batch_size = 4096
-evaluation_file = "SynTabRL_eval.json"
-pretrain_steps = 4000
 privacy_discount = 0.1
-logsumexp_sigma = 0.01
 
 [train.T]
 seed = 0
@@ -41,9 +44,9 @@ cat_encoding = "__none__"
 y_policy = "default"
 
 [sample]
-num_samples = 20800
+num_samples = 22244
 batch_size = 10000
-seed = 4
+seed = 0
 
 [eval.type]
 eval_model = "catboost"
@@ -59,6 +62,6 @@ cat_encoding = "__none__"
 y_policy = "default"
 
 [privacy_config]
-dcr = 0.2
-nndr = 0.85
-gower = 0.05
+dcr = 0.1
+nndr = 0.8
+gower = 0.1
