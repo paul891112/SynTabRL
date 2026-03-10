@@ -53,6 +53,7 @@ def sample(
     num_numerical_features_ = D.X_num['train'].shape[1] if D.X_num is not None else 0
     d_in = np.sum(K) + num_numerical_features_
     model_params['d_in'] = int(d_in)
+    print(f"model_params: {model_params}")
     model = get_model(
         model_type,
         model_params,

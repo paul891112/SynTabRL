@@ -1,0 +1,10 @@
+{
+    "name": "loan",
+    "id": "loan--id",
+    "task_type": "binclass",
+    "n_num_features": 8,
+    "n_cat_features": 5,
+    "train_size": 28800,
+    "val_size": 7200,
+    "test_size": 9000
+}

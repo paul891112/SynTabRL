@@ -125,6 +125,14 @@ class RLAgent:
 
         self.real_data, self.target_size, self.dataset_info = self.load_real_data(self.raw_config['real_data_path'])  # loads
         self.real_data = np.asarray(self.real_data)
+        
+        # Load real data for initial training and evaluation
+        self.mm, self.ohe, self.X_num_real, self.X_cat_real = None, None, None, None    # X_cat_real is the onehot encoded categorical features of real data
+        # Load real data with currently fitted mm and ohe if available
+        extra_info = generate_dataset_info(real_data_path=self.raw_config['real_data_path'], change_val=self.args.change_val)  # generates DatasetInfo and saves to dataset_info folder if not already exists
+
+        self.real_data, self.target_size, self.dataset_info = self.load_real_data(self.raw_config['real_data_path'])  # loads
+        self.real_data = np.asarray(self.real_data)
                 
         self.dataset_info.update(extra_info)
         self.dataset_info['category_sizes'].append(self.target_size)

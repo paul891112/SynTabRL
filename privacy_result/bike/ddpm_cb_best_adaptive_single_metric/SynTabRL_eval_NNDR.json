@@ -1,0 +1,23 @@
+{
+    "wasserstein_distance_numerical": 0.010841030926016555,
+    "js_similarity_categorical": 0.993275578860311,
+    "correlation_pearson": 0.9942877964002577,
+    "correlation_spearman": 0.9849532735424343,
+    "dcr_euclidean": 0.07788676074257803,
+    "nndr_euclidean": 0.7271005308871216,
+    "nndr_cosine": 0.5676816762062247,
+    "gower_distance": 0.44951147247211204,
+    "dcr_gower_distance": 0.08045012819839713,
+    "mean": 0.004496474367523996,
+    "median": 0.012282340296425684,
+    "var": 0.0019788656398693743,
+    "val": {
+        "r2": 0.9516,
+        "rmse": 39.7137
+    },
+    "test": {
+        "r2": 0.9493,
+        "rmse": 40.0588
+    },
+    "elapsed_time": "Total training time: 41 min 17.49 sec"
+}

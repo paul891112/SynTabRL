@@ -82,7 +82,6 @@ def make_dataset(
         task_type=lib.TaskType(info['task_type']),
         n_classes=info.get('n_classes')
     )
-
     if change_val:
         D = lib.change_val(D)
     

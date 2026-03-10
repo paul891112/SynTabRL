@@ -82,8 +82,35 @@ def main():
         
         minutes, seconds = divmod(elapsed_time, 60)
         file.write(f"\nTotal training, sampling and evaluation time: {int(minutes)} min {seconds:.2f} sec\n")
-        
+
+
+def main_debug():
+    
+    parser = argparse.ArgumentParser()    
+    parser.add_argument('--model', choices=['ctgan', 'ctabgan', 'tvae', 'smote'], required=True)
+    parser.add_argument('--config', metavar='FILE')
+    
+    args = parser.parse_args()
+    print(f"Using config file: {args.config}")
+    print(f"Using model: {args.model}")
+    raw_config = lib.load_config(args.config)
+    
+    dataset_info = generate_dataset_info(real_data_path=raw_config['real_data_path'])  # generates DatasetInfo and saves to dataset_info folder if not already exists
+    pipeline = get_model_pipeline(args)
+    st = time.time()
+
+    # Train and sample the model
+    # subprocess.run(pipeline, check=True)
+    
+    # Evaluate privacy, adopted from evaluate_privacy.py, evaluate_privacy_main()
+    
+    x_real, x_fake, target_size, task_type = load_data(raw_config['real_data_path'], raw_config['parent_dir'])
+    
+    
+    
+           
 if __name__ == '__main__':
     main()
+    # main_debug()
     
     
