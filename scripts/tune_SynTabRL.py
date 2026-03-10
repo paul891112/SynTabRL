@@ -5,12 +5,15 @@ import optuna
 from copy import deepcopy
 import shutil
 import argparse
+import time
 from pathlib import Path
 
 
 def log_to_txt(file_path, message):
     with open(file_path, 'a') as f:
         f.write(message + '\n')
+        
+very_start = time.time()
 
 parser = argparse.ArgumentParser()
 parser.add_argument('ds_name', type=str)
@@ -33,6 +36,16 @@ original_config_path = f'exp/{ds_name}/ddpm_cb_best/config.toml'
 parent_path = Path(f'privacy_result/{ds_name}/')
 exps_path = Path(f'privacy_result/{ds_name}/many-exps/')
 pipeline = f'scripts/rlagent.py'
+
+log_path = f'privacy_result/{ds_name}/hyperparameter_tuning_log.txt'
+trial_count = 0
+with open(log_path, "w") as f:
+    f.write(f"Initiating hyperparameter tuning for dataset {ds_name}.\n")
+    f.write('\n')
+
+# Step 2: Append more data later
+with open("data.txt", "a") as f:
+    f.write("This is an appended line.\n")
 
 """
 if args.privacy:  # Paul: added privacy option
@@ -70,6 +83,8 @@ def _suggest_mlp_layers(trial):
     return d_layers
 
 def objective(trial):
+    
+    start = time.time()
     
     # Loading original TabDDPM config
     # 06.03 Since ddpm_cb_best config is now in privacy_result/dataset/config.toml, this block is only to instantiate 
@@ -189,7 +204,16 @@ def objective(trial):
         
 
     shutil.rmtree(exps_path / f"{trial.number}")
-
+    
+    elapsed = time.time() - start
+    minutes, seconds = divmod(elapsed, 60)
+    hours, minutes = divmod(minutes, 60)
+    with open(log_path, "a") as f:
+        f.write(f"Trial {trial.number} completed in {hours} h {minutes} min {seconds} sec.\n")
+        f.write(f"ML efficiency score: {score / n_datasets}.\n")
+        f.write(f"Privacy score: {privacy / n_datasets}. \n")
+        f.write('\n')
+    
     return score / n_datasets, privacy / n_datasets
 
 study = optuna.create_study(
@@ -225,3 +249,8 @@ if args.eval_seeds:
     best_exp = str(parent_path / f'{prefix}_best/config.toml')
     subprocess.run(['python3.9', f'{eval_seeds}', '--config', f'{best_exp}', '10', "ddpm", eval_type, args.eval_model, '5'], check=True)
     
+very_end = time.time() - very_start
+minutes, seconds = divmod(very_end, 60)
+hours, minutes = divmod(minutes, 60)
+with open(log_path, 'a') as f:
+    f.write(f'Hyperparameter Tuning Complete. Total time: {hours} h {minutes} min {seconds} sec. \n')
