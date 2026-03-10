@@ -1,0 +1,23 @@
+{
+    "wasserstein_distance_numerical": 0.062017485416549,
+    "js_similarity_categorical": 0.9777241525107762,
+    "correlation_pearson": 0.9822097431222927,
+    "correlation_spearman": 0.9702782575237962,
+    "dcr_euclidean": 0.1618901615815837,
+    "nndr_euclidean": 0.8452517249157984,
+    "nndr_cosine": 0.721365782463751,
+    "gower_distance": 0.4657181644940206,
+    "dcr_gower_distance": 0.0874088573501503,
+    "mean": 0.016526961990995945,
+    "median": 0.015066864326311696,
+    "var": 0.008617531599986317,
+    "val": {
+        "r2": 0.936,
+        "rmse": 45.6777
+    },
+    "test": {
+        "r2": 0.9331,
+        "rmse": 46.021
+    },
+    "elapsed_time": null
+}

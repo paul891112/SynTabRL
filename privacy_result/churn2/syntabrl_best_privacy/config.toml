@@ -1,5 +1,5 @@
 seed = 1
-parent_dir = "privacy_result/churn2/many-exps/19"
+parent_dir = "privacy_result/churn2/syntabrl_best_privacy"
 real_data_path = "data/churn2/"
 model_type = "mlp"
 num_numerical_features = 7
