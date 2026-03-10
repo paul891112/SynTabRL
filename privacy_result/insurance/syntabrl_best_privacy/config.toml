@@ -1,22 +1,23 @@
-seed = 1
-parent_dir = "privacy_result/churn2/many-exps/19"
-real_data_path = "data/churn2/"
+seed = 0
+parent_dir = "privacy_result/insurance/syntabrl_best_privacy"
+real_data_path = "data/insurance/"
+num_numerical_features = 3
 model_type = "mlp"
-num_numerical_features = 7
-device = "cuda:1"
+device = "cuda:0"
 
 [model_params]
-num_classes = 2
-is_y_cond = true
+d_in = 12
+num_classes = 0
+is_y_cond = false
 
 [model_params.rtdl_params]
 d_layers = [
+    256,
     512,
-    1024,
-    1024,
-    1024,
-    1024,
     512,
+    512,
+    512,
+    256,
 ]
 dropout = 0.0
 
@@ -27,12 +28,12 @@ scheduler = "cosine"
 
 [train.main]
 steps = 30000
-lr = 0.0008057094292475385
+lr = 0.0011121628249569867
 weight_decay = 0.0
 batch_size = 4096
 evaluation_file = "SynTabRL_eval.json"
 pretrain_steps = 2000
-privacy_discount = 0.05
+privacy_discount = 0.01
 logsumexp_sigma = 0.01
 
 [train.T]
@@ -45,13 +46,14 @@ cat_encoding = "__none__"
 y_policy = "default"
 
 [sample]
-num_samples = 26000
+num_samples = 7200
 batch_size = 10000
 seed = 4
 
 [eval.type]
 eval_model = "catboost"
 eval_type = "synthetic"
+model = "catboost"
 
 [eval.T]
 seed = 0
@@ -63,6 +65,6 @@ cat_encoding = "__none__"
 y_policy = "default"
 
 [privacy_config]
-dcr = 0.3
+dcr = 0.25
 nndr = 0.8
 gower = 0.05

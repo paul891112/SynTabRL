@@ -1,5 +1,5 @@
 seed = 1
-parent_dir = "privacy_result/churn2/many-exps/19"
+parent_dir = "privacy_result/churn2/syntabrl_best_ML"
 real_data_path = "data/churn2/"
 model_type = "mlp"
 num_numerical_features = 7
@@ -63,6 +63,6 @@ cat_encoding = "__none__"
 y_policy = "default"
 
 [privacy_config]
-dcr = 0.3
+dcr = 0.2
 nndr = 0.8
-gower = 0.05
+gower = 0.1

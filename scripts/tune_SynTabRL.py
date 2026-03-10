@@ -172,7 +172,7 @@ def objective(trial):
         lib.dump_config(base_config, exps_path / 'config.toml')
         
         
-        subprocess.run(['python3.9', f'{pipeline}', '--config', f'{exps_path / "config.toml"}', '--sample', '--eval', '--change_val'], check=True)
+        subprocess.run(['python3.9', f'{pipeline}', '--config', f'{exps_path / "config.toml"}', '--sample', '--eval'], check=True)  # Paul: remove --change_val flag, can cause categories to disappear in categorical data
 
         report_path = str(Path(base_config['parent_dir']) / f'results_{args.eval_model}.json')
         eval_path = str(Path(base_config['parent_dir']) / 'SynTabRL_eval.json')
@@ -219,7 +219,7 @@ lib.dump_json(optuna.importance.get_param_importances(study, target=lambda t: t.
 lib.dump_json(optuna.importance.get_param_importances(study, target=lambda t: t.values[1]), parent_path / f'{prefix}_best_privacy/importance.json')
 
 
-subprocess.run(['python3.9', f'{pipeline}', '--config', f'{best_privacy_config_path}', '--train', '--sample', '--eval'], check=True)
+subprocess.run(['python3.9', f'{pipeline}', '--config', f'{best_privacy_config_path}', '--train', '--adaptive_single_metric', 'dcr', '--sample', '--eval'], check=True)
 
 if args.eval_seeds:
     best_exp = str(parent_path / f'{prefix}_best/config.toml')

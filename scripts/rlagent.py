@@ -775,7 +775,8 @@ class RLAgent:
         res = self.evaluate_ml()
         
         eval_result = stats | scores | res.get_metrics()
-        eval_result["elapsed_time"] = elapsed_time
+        minutes, seconds = divmod(elapsed_time, 60)
+        eval_result["elapsed_time"] = f"Total training time: {int(minutes)} min {seconds:.2f} sec"
         eval_path = str(Path(self.raw_config['parent_dir']) / self.evaluation_file)
         lib.dump_json(eval_result, eval_path)
         """
@@ -799,7 +800,7 @@ class RLAgent:
         """
         
         
-    def generate_samples(self, num_samples=5000, **kwargs):
+    def generate_samples(self, num_samples=5000, seed_offset=0, **kwargs):
         """Generates samples using the current model and configuration. 2000 by default"""
         num_samples = num_samples
         return sample(
@@ -815,7 +816,7 @@ class RLAgent:
             T_dict=self.raw_config['train']['T'],
             num_numerical_features=self.raw_config['num_numerical_features'],
             device=self.device,
-            seed=self.raw_config['sample'].get('seed', 0),
+            seed=self.raw_config['sample'].get('seed', 0)+seed_offset,
             change_val=self.args.change_val
         )
 
@@ -1128,7 +1129,7 @@ class RLAgent:
             )
         return res
                         
-    def generate_and_filter_samples_percentile(self, num_samples, value, evaluate_sample_file=False):
+    def generate_and_filter_samples_percentile(self, num_samples, value, evaluate_sample_file=False, **kwargs):
         assert value is None or (0 <= value <= 1), "In percentile approach, value must be between 0 and 1, representing the percentage of samples to filter out based on DCR."
         if value is None:
             value = 0.1  # default to filtering out the 10% closest samples if no value is provided
@@ -1196,7 +1197,7 @@ class RLAgent:
         return X_num_filtered, X_cat_filtered, y_gen_filtered
     
     
-    def generate_and_filter_samples_threshold(self, num_samples, value):
+    def generate_and_filter_samples_threshold(self, num_samples, value, max_value):
         if value is None:
             value = 0.15  # default to a DCR threshold of 0.15 if no value is provided
         final_X_num, final_X_cat, final_y = [], [], []
@@ -1212,7 +1213,7 @@ class RLAgent:
             remaining = num_samples - count
             print(f"Remaining samples to generate: {remaining}")
             
-            X_n, X_c, y_g = self.generate_samples(num_samples=chunk_size)
+            X_n, X_c, y_g = self.generate_samples(num_samples=chunk_size, seed_offset=iterations)
             
             # 2. Compute DCR for this chunk
             synthetic_data = self.load_fake_data(X_n, X_c, y_g, for_training=False)
@@ -1225,8 +1226,10 @@ class RLAgent:
                 return_min_distances=True
             )
             
-            # 3. Filter: Only keep samples strictly GREATER than the threshold
+            # 3. Filter: Only keep samples strictly GREATER than the threshold and SMALLER than optional max_value
             keep_indices = min_distances > value
+            if max_value is not None:
+                keep_indices &= (min_distances < max_value)
             
             # print(f"Xn.shape: {X_n.shape if X_n is not None else 'None'}, min_distances.shape: {min_distances.shape}, DCR Threshold: {value}")
             
@@ -1293,6 +1296,13 @@ def main():
         type=float, 
         help="The numeric value for the approach (percentile 0-100 or DCR distance)"
     )
+    parser.add_argument(
+        '--max_value', 
+        type=float, 
+        default=None,
+        help='Sets the max value (only available if --sample and --filter is set)'
+    )
+    
     
     
     parser.add_argument('--eval', action='store_true', default=False)
@@ -1311,6 +1321,7 @@ def main():
     print("Starting agent ...")
     agent = RLAgent(name="RLAgent1", args=args, raw_config=raw_config, device=device)
     X_num, X_cat, y_gen = None, None, None
+    st = time.time()
     if args.train:
         agent.run_algorithm()
         
@@ -1323,7 +1334,7 @@ def main():
         if args.sample < 0:
             args.sample = agent.raw_config['sample']['num_samples']
 
-        X_num, X_cat, y_gen = sample_method(num_samples=args.sample, value=args.filter_value)
+        X_num, X_cat, y_gen = sample_method(num_samples=args.sample, value=args.filter_value, max_value=args.max_value)
         
         """
         if X_num is not None:
@@ -1334,9 +1345,10 @@ def main():
         
         print(f"X_num type: {type(X_num)}, X_cat type: {type(X_cat)}, y_gen type: {type(y_gen)}")
         """
+    elapsed_time = time.time() - st    
+    if args.eval and not args.train:
         
-    if args.eval:
-        agent.evaluate_generation(X_num=X_num, X_cat=X_cat, y_gen=y_gen)
+        agent.evaluate_generation(elapsed_time=elapsed_time, X_num=X_num, X_cat=X_cat, y_gen=y_gen)
         
     
 if __name__ == '__main__':
