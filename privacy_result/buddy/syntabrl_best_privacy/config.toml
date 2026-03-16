@@ -1,5 +1,5 @@
 seed = 0
-parent_dir = "privacy_result/buddy/many-exps/19"
+parent_dir = "privacy_result/buddy/syntabrl_best_privacy"
 real_data_path = "data/buddy/"
 model_type = "mlp"
 num_numerical_features = 4

@@ -1,0 +1,83 @@
+Initiating hyperparameter tuning for dataset buddy.
+
+Trial 0 completed in 1.0 h 17.0 min 44.68627691268921 sec.
+ML efficiency score: 0.9038181953107258.
+Privacy score: -0.16939755410805754. 
+
+Trial 1 completed in 1.0 h 21.0 min 58.27082180976868 sec.
+ML efficiency score: 0.9078111449430963.
+Privacy score: -0.14848698256802256. 
+
+Trial 2 completed in 1.0 h 19.0 min 59.16622757911682 sec.
+ML efficiency score: 0.9074858153863394.
+Privacy score: -0.1387928532288994. 
+
+Trial 3 completed in 1.0 h 20.0 min 54.49296998977661 sec.
+ML efficiency score: 0.907080911689639.
+Privacy score: -0.08367629941375218. 
+
+Trial 4 completed in 1.0 h 21.0 min 6.670720100402832 sec.
+ML efficiency score: 0.9072098095913997.
+Privacy score: -0.1651499497417025. 
+
+Trial 5 completed in 1.0 h 22.0 min 22.859928131103516 sec.
+ML efficiency score: 0.9088306605581209.
+Privacy score: -0.037802048141634216. 
+
+Trial 6 completed in 2.0 h 6.0 min 42.68116235733032 sec.
+ML efficiency score: 0.9093361390656384.
+Privacy score: -0.17613263575085228. 
+
+Trial 7 completed in 1.0 h 21.0 min 5.546396255493164 sec.
+ML efficiency score: 0.9056319555224215.
+Privacy score: -0.18075414383018917. 
+
+Trial 8 completed in 1.0 h 18.0 min 16.967237949371338 sec.
+ML efficiency score: 0.9076796568142287.
+Privacy score: -0.19252587179280198. 
+
+Trial 9 completed in 1.0 h 19.0 min 0.9846653938293457 sec.
+ML efficiency score: 0.9080376172755494.
+Privacy score: -0.2241714963847854. 
+
+Trial 10 completed in 1.0 h 20.0 min 43.27192831039429 sec.
+ML efficiency score: 0.9079641709325987.
+Privacy score: -0.21207013921597967. 
+
+Trial 11 completed in 1.0 h 19.0 min 10.107454538345337 sec.
+ML efficiency score: 0.9091655177141554.
+Privacy score: -0.21445446892110964. 
+
+Trial 12 completed in 1.0 h 22.0 min 0.9087209701538086 sec.
+ML efficiency score: 0.9036455211486286.
+Privacy score: -0.19800536135699437. 
+
+Trial 13 completed in 1.0 h 19.0 min 23.893874645233154 sec.
+ML efficiency score: 0.9112577559193337.
+Privacy score: -0.18247124678563337. 
+
+Trial 14 completed in 1.0 h 21.0 min 4.102708101272583 sec.
+ML efficiency score: 0.9086966077838683.
+Privacy score: -0.18833055697513268. 
+
+Trial 15 completed in 3.0 h 5.0 min 35.861648082733154 sec.
+ML efficiency score: 0.9070428415634796.
+Privacy score: -0.2313792447720381. 
+
+Trial 16 completed in 2.0 h 2.0 min 35.834553956985474 sec.
+ML efficiency score: 0.9091401786085168.
+Privacy score: -0.22556693668372776. 
+
+Trial 17 completed in 1.0 h 20.0 min 47.96094226837158 sec.
+ML efficiency score: 0.9080216022515835.
+Privacy score: -0.17166172879598393. 
+
+Trial 18 completed in 1.0 h 21.0 min 20.58999013900757 sec.
+ML efficiency score: 0.9093344662502798.
+Privacy score: -0.19126889973152078. 
+
+Trial 19 completed in 1.0 h 19.0 min 31.13114619255066 sec.
+ML efficiency score: 0.9106181181538746.
+Privacy score: -0.23613480861867311. 
+
+Hyperparameter Tuning Complete. Total time: 31.0 h 2.0 min 44.99473547935486 sec. 
