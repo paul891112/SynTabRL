@@ -19,5 +19,5 @@
         "acc": 0.3408,
         "f1": 0.1724
     },
-    "elapsed_time": null
+    "elapsed_time": "Total training time: 11 min 9.98 sec"
 }

@@ -1267,6 +1267,7 @@ def main():
     parser.add_argument('--config', metavar='FILE')
     
     group = parser.add_mutually_exclusive_group()  # privacy_approach_group
+    group.add_argument('--no_privacy', action='store_true', default=False)
     group.add_argument('--vector_approach', action='store_true', default=False)
     group.add_argument('--weighted_vector', action='store_true', default=False)
     group.add_argument('--sum_approach', action='store_true', default=False)
@@ -1284,8 +1285,6 @@ def main():
         help="Toggle single metric mode. Please specify which one to use.",
     )
     parser.add_argument('--train', action='store_true', default=False)
-    
-    
     parser.add_argument('--sample', 
                         type=int,
                         help="The number of samples to generate",
@@ -1311,8 +1310,6 @@ def main():
         help='Sets the max value (only available if --sample and --filter is set)'
     )
     
-    
-    
     parser.add_argument('--eval', action='store_true', default=False)
     parser.add_argument('--change_val', action='store_true',  default=False)
     
@@ -1330,6 +1327,22 @@ def main():
     agent = RLAgent(name="RLAgent1", args=args, raw_config=raw_config, device=device)
     X_num, X_cat, y_gen = None, None, None
     st = time.time()
+    
+    if args.no_privacy:
+        args.train = False
+        train(
+        **raw_config['train']['main'],
+        **raw_config['diffusion_params'],
+        parent_dir=raw_config['parent_dir'],
+        real_data_path=raw_config['real_data_path'],
+        model_type=raw_config['model_type'],
+        model_params=raw_config['model_params'],
+        T_dict=raw_config['train']['T'],
+        num_numerical_features=raw_config['num_numerical_features'],
+        device=device,
+        change_val=args.change_val
+        )
+
     if args.train:
         agent.run_algorithm()
         
