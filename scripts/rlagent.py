@@ -31,6 +31,7 @@ from datasetinfo import generate_dataset_info
 
 DEFAULT_PRIVACY_METRIC = "dcr"
 
+APPROACH_FLAGS = ['--vector_approach', '--weighted_vector', '--sum_approach', '--continuous_approach', '--adaptive_approach', '--adaptive_single_metric', 'single_metric']
 
 
 PRIVACY_CONFIG_DICT = {
@@ -395,11 +396,14 @@ class RLAgent:
                 print(f"Continuous State: {self.__state}")
                 weighting_factors = self.continuous_weighting_factors()
                 train_result = self.train_model_adaptive(weighting_factors, privacy_metric=single_metric)
-            else:                
+            else:
+                raise ValueError(f"Invalid flag for approach. Select one of the following:\n {APPROACH_FLAGS}")          
+                """      
                 self.__state = self.evaluate_state(X_num, X_cat, y_gen)
                 print(f"=== RL Agent Round {counter} ===")
                 print(f"State: {self.get_state().name}")
                 train_result = self.train_model()
+                """
             self.loss_history = pd.concat([self.loss_history, train_result], axis=0, ignore_index=True)
             self.completed_steps += self.steps_per_round
             self.actual_training_steps += self.steps_per_round

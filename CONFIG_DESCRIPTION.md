@@ -17,6 +17,16 @@ Model params:
 - `num_calsses` -- zero for regression, a number of classes for classification
 - `rtdl_params` -- MLP parameters
 
+
+Additionally, for the base configurations in privacy_result, we adopt the best available configuration evaluated on catboost and introduce the following parameters.
+
+Privacy configuration (privacy_config):
+- `dcr -- defines a proxy for low DCR level
+- nndr -- defines a proxy for low NNDR level
+- gower -- defines a proxy for low Gower's DCR level
+
+
+
 ```toml
 seed = 0
 parent_dir = "exp/abalone/check"
@@ -74,5 +84,11 @@ cat_nan_policy = "__none__"
 cat_min_frequency = "__none__"
 cat_encoding = "__none__"
 y_policy = "default"
+
+[privacy_config]
+dcr = 0.2
+nndr = 0.85
+gower = 0.1
+
 
 ```
