@@ -1,5 +1,5 @@
 seed = 0
-parent_dir = "privacy_result/abalone/ddpm_mlp_best_no_privacy"
+parent_dir = "privacy_result/abalone/ddpm_cb_best_no_privacy"
 real_data_path = "data/abalone/"
 model_type = "mlp"
 num_numerical_features = 7
@@ -44,7 +44,7 @@ batch_size = 10000
 seed = 0
 
 [eval.type]
-eval_model = "mlp"
+eval_model = "catboost"
 eval_type = "synthetic"
 
 [eval.T]
