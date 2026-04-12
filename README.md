@@ -82,6 +82,7 @@ All main scripts are in `scripts/` folder:
 - `scripts/eval_seeds_simple.py` --  eval using multiple sampling and multuple eval seeds (for simple models)
 - `scripts/tune_evaluation_model.py` -- tune hyperparameters of eval model (CatBoost or MLP)
 - `scripts/resample_privacy.py` -- privacy calculation  
+-`scripts/plot.ipynb` and `scripts/visualization.ipynb` -- contain code for data visualization, the generated plots are used in the report and final presentation.
 
 Experiments folder (`privacy_result/`):
 - Contains SynTabRL results and synthetic data stored in `privacy_result/[ds_name]/[exp_name]\` folder

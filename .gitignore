@@ -5,6 +5,7 @@ catboost_info/
 **/**.ipynb
 !agg_results.ipynb
 !scripts/plot.ipynb
+!scripts/visualization.ipynb
 **/**.npy
 **/**.gz
 **/**.sh
