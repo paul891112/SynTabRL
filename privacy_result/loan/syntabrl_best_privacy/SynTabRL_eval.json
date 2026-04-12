@@ -1,25 +1,25 @@
 {
-    "wasserstein_distance_numerical": 0.17344276375546508,
-    "js_similarity_categorical": 0.9624584230514892,
-    "correlation_pearson": 0.9447774555374236,
-    "correlation_spearman": 0.9482024538981296,
-    "dcr_euclidean": 0.37674853977503314,
-    "nndr_euclidean": 0.8682988384752236,
-    "nndr_cosine": 0.781710303616234,
-    "gower_distance": 0.3977113430081867,
-    "dcr_gower_distance": 0.04706704665674897,
-    "mean": 0.06677088444153932,
-    "median": 0.0866759829304784,
-    "var": 0.034385289250658854,
+    "wasserstein_distance_numerical": 0.2675022396073081,
+    "js_similarity_categorical": 0.9489574529254312,
+    "correlation_pearson": 0.9386473238112593,
+    "correlation_spearman": 0.9398417701192162,
+    "dcr_euclidean": 0.477326943571258,
+    "nndr_euclidean": 0.8651550573831072,
+    "nndr_cosine": 0.7711705810150379,
+    "gower_distance": 0.45209226401435326,
+    "dcr_gower_distance": 0.05131451396916811,
+    "mean": 0.09690598363185153,
+    "median": 0.12215292570541546,
+    "var": 0.04737946415330164,
     "val": {
-        "acc": 0.919,
-        "f1": 0.8754,
-        "roc_auc": 0.9677
+        "acc": 0.9189,
+        "f1": 0.8719,
+        "roc_auc": 0.9687
     },
     "test": {
-        "acc": 0.9141,
-        "f1": 0.8701,
-        "roc_auc": 0.9651
+        "acc": 0.915,
+        "f1": 0.8674,
+        "roc_auc": 0.9667
     },
-    "elapsed_time": "Total training time: 40 min 52.93 sec"
+    "elapsed_time": "Total training time: 83 min 4.51 sec"
 }

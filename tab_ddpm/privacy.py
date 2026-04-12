@@ -6,8 +6,9 @@ import torch.nn.functional as F
 from torch.profiler import record_function
 import math
 
-DCR_EXPONENTIAL_COMPLEMENT_CONSTANT = 1.5  # constant k in exponential complement
 
+### Distance-based Privacy Loss Functions, used during TabDDPM training ###
+### Adopted from https://github.com/CSG-AISym4MED/synprivutil #############
 
 
 def numerical_nndr_loss(original, synthetic, **kwargs):
@@ -21,10 +22,6 @@ def numerical_nndr_loss(original, synthetic, **kwargs):
     Returns:
         torch.Tensor: NNDR loss in ratio
     """
-    # original = torch.rand(4096, 7)
-    # synthetic = torch.rand(4096, 7)  # NNDR = 0.866
-    # synthetic = original + torch.ones_like(original)  # NNDR = 0.0915
-
 
     start = time.time()
     # Compute distances from each synthetic record to all original records
@@ -43,16 +40,23 @@ def numerical_nndr_loss(original, synthetic, **kwargs):
 
     end = time.time()
 
-    # print(1/nndr_ratio.item())
-    # print(f"Elapsed time: {end-start}s")
     return nndr_ratio.mean()
 
 def no_categorical_nndr(log_x_cat, model_out_cat, num_cat_features, category_sizes):
+    """
+    This function returns a constant value of 1.0 for the categorical NNDR loss.
+    A data sample can have a the same distance to the nearest and second nearest neighbor 
+    in the synthetic data, since there is a limited combination of categorical feature values. 
+    In this case, the NNDR would be 1.0, which is the maximum possible value for this ratio, 
+    and no effective learning signal can be derived from this loss.
+    Therefore, we do not use the categorical NNDR loss for training.
+
+    """
     return torch.tensor(1.0, device=log_x_cat.device)
     
 def categorical_nndr_loss(log_x_cat, model_out_cat, num_cat_features, category_sizes, **kwargs):
     """
-    Paul
+    Depricated.
     Calculates privacy loss of input and output in the current training step.\n
     Given the clean one-hot encoded categorical features and the predicted logits, compute euclidean distance of each feature.\n
     Then take the average of all distances, divide by square root of 2 to normalize the maximum distance to 1.\n
@@ -100,37 +104,15 @@ def categorical_nndr_loss(log_x_cat, model_out_cat, num_cat_features, category_s
 
         return nndr_ratio.mean()
     
-        # ----- Old approach -----
-    """
-        
-        # Calculate distance between input and output categorical features
-        distances = torch.cdist(probabilities, x_cat_ohe, p=2)
-        # For each row in out_num, get the index of the nearest row in x_num
-        nearest_idx = torch.argmin(distances, dim=0)
-        farthest_idx = torch.argmax(distances, dim=0)
-
-        # Get the actual distances and normalize with max distances
-        nearest_distances = distances[nearest_idx/farthest_idx, torch.arange(model_out_cat.shape[0])]
-                
-        # Divide by sqrt(sum(2/labels_per_feature)) to normalize the maximum distance to 1
-        privacy_loss = nearest_distances/ (math.sqrt(max_normal_dist))
-        
-        return privacy_loss.mean()
-    """
     
     
 def compute_gower_num(x_num, model_out_num, sigma=0.01, **kwargs):
     """
-    Paul
-    Computes Gower's distance between original and synthetic data.
+    Computes Gower's distance of numerical component between original and synthetic data.
 
     Args:
         x_num (torch.Tensor): numerical features\n
         model_out_num (torch.Tensor): numerical predictions\n
-        x_cat (torch.Tensor): categorical features\n
-        model_out_cat (torch.Tensor): categorical predictions (logits)\n
-        num_num_features (int): number of numerical features\n
-        num_cat_features (int): number of categorical features\n
 
     Returns:
         torch.Tensor: Gower's distance
@@ -167,6 +149,20 @@ def compute_gower_num(x_num, model_out_num, sigma=0.01, **kwargs):
 
         
 def compute_gower_cat(log_x_cat, model_out_cat, num_cat_features, category_sizes, sigma=0.01, **kwargs):
+    """
+    Computes Gower's distance of numerical component between original and synthetic data.
+    
+    Args:
+        x_cat (torch.Tensor): categorical features\n
+        model_out_cat (torch.Tensor): categorical predictions (logits)\n
+        num_cat_features: number of categorical features\n
+        category_sizes: list of label amount per categorical feature\n
+        sigma: hyperparameter for soft minimum calculation\n
+        
+    Returns:
+        torch.Tensor: Gower's distance
+    """
+    
     
     with record_function("gower_distance_cat"):
         # --- Categorical Feature Dissimilarity ---
@@ -235,7 +231,6 @@ def compute_gower_cat(log_x_cat, model_out_cat, num_cat_features, category_sizes
 def dcr_cat_loss(log_x_cat, model_out_cat, num_cat_features, category_sizes, **kwargs):
     """
     Compute pair-wise distance matrix, take minimum distance per synthetic record to the original, normalize using Exponential Complement.
-    Current implementation does not normalized the distance value with category_sizes because this loss function should reflect numerical ressemblance with original data without context. 
     
     log_x_cat: log encoded input one-hot vector for categorical data
     model_out_cat: logits of predicted output one-hot vector for categorical data
@@ -268,25 +263,21 @@ def dcr_cat_loss(log_x_cat, model_out_cat, num_cat_features, category_sizes, **k
     
     return torch.mean(nearest_distances)
     
-    # ----- Normalize min distances with max distances per row, not required for gradient descent with additive loss terms -----
-    """
-    d_max_row = torch.max(dists, dim=1).values  # shape: (num_synth,)
-    d_max_row = torch.clamp(d_max_row, min=1e-8)
-    
-    # Row-wise normalized distances: nearest / row_max
-    d_norm = nearest_distances / d_max_row
-    
-    # print(f"dcr_cat_loss at training: {d_norm}")
-    return torch.mean(d_norm)
-    """
 
 def dcr_num_loss(x_num, model_out_num, **kwargs):
+    """
+    Compute pair-wise distance of synthetic and original numerical data, return minimum.
+    Args:
+        x_num: input numerical data
+        model_out_num: predicted numerical data
+    
+    """
     
     dists = torch.cdist(
         model_out_num, 
         x_num, 
         p=2.0
-    )     
+    )
     
     # Find the nearest distance (d1), which is the 1st smallest value (k=1)
     # The output is a named tuple (values, indices)
@@ -294,24 +285,17 @@ def dcr_num_loss(x_num, model_out_num, **kwargs):
     
     return torch.min(nearest_distances)
 
-    # ----- Normalize min distances with max distances per row, not required for gradient descent with additive loss terms -----
-    """
-    
-    # d_max_row[i] = max_j dists[i, j]
-    d_max_row = torch.max(dists, dim=1).values  # shape: (num_synth,)
-    d_max_row = torch.clamp(d_max_row, min=1e-8)
-    
-    # Row-wise normalized distances: nearest / row_max
-    d_norm = nearest_distances / d_max_row
-        
-    return torch.mean(d_norm)
-    """
 
 NUM_TASK_MAP = {0: dcr_num_loss, 1: numerical_nndr_loss, 2: compute_gower_num}
 CAT_TASK_MAP = {0: dcr_cat_loss, 1: categorical_nndr_loss, 2: compute_gower_cat}    
 
 
 def vector_num_loss(x_num, model_out_num, **kwargs):
+    """
+    Depricated.
+    Compute privacy loss of vector approach losses for numerical data.
+    """
+    
     # Iterate through the sorted map to ensure the order [0, 1, 2] is preserved
     losses = [
         NUM_TASK_MAP[i](x_num, model_out_num, **kwargs) 
@@ -322,6 +306,11 @@ def vector_num_loss(x_num, model_out_num, **kwargs):
 
 
 def vector_cat_loss(log_x_cat, model_out_cat, num_cat_features, category_sizes, **kwargs):
+    """
+    Depricated.
+    Compute privacy loss of vector approach losses for categorical data.
+    """
+    
     
     # Iterate through the sorted map to ensure the order [0, 1, 2] is preserved
     losses = [
@@ -333,6 +322,10 @@ def vector_cat_loss(log_x_cat, model_out_cat, num_cat_features, category_sizes, 
 
 
 def adaptive_num_loss(x_num, model_out_num, weights, **kwargs):
+    """
+    Use adaptive weighting on individual loss components, where the weights are determined 
+    by the current privacy state, provided by RLAgent.
+    """
 
     results = []
     for i, val in enumerate(weights):
@@ -345,6 +338,11 @@ def adaptive_num_loss(x_num, model_out_num, weights, **kwargs):
     return torch.stack(results)
 
 def adaptive_cat_loss(log_x_cat, model_out_cat, num_cat_features, category_sizes, weights, **kwargs):
+    """
+    Use adaptive weighting on individual loss components, where the weights are determined 
+    by the current privacy state, provided by RLAgent.
+    """
+
 
     results = []
     for i, val in enumerate(weights):
@@ -358,6 +356,11 @@ def adaptive_cat_loss(log_x_cat, model_out_cat, num_cat_features, category_sizes
 
 
 def sum_cat_loss(log_x_cat, model_out_cat, num_cat_features, category_sizes, **kwargs):
+    """
+    Compute the sum of all three categorical loss components as the final privacy loss 
+    for categorical data.
+    """
+    
     losses = [
         CAT_TASK_MAP[i](log_x_cat, model_out_cat, num_cat_features, category_sizes, **kwargs)
         for i in range(3)
@@ -369,6 +372,10 @@ def sum_cat_loss(log_x_cat, model_out_cat, num_cat_features, category_sizes, **k
 
 
 def sum_num_loss(x_num, model_out_num, **kwargs):
+    """
+    Compute the sum of all three numerical loss components as the final privacy loss 
+    for numerical data.
+    """
     losses = [
         NUM_TASK_MAP[i](x_num, model_out_num, **kwargs)
         for i in range(3)
@@ -379,7 +386,6 @@ def sum_num_loss(x_num, model_out_num, **kwargs):
     return -torch.exp(-l_dcr) + l_nndr + l_gower
 
 PRIVACY_FUNCTIONS = {
-    # "nndr_cat_loss": categorical_nndr_loss,  # remove categorical nndr loss for better performance and no added loss information
     "nndr_cat_loss": no_categorical_nndr,
     "nndr_num_loss": numerical_nndr_loss,
     "gower_cat_loss": compute_gower_cat,
@@ -394,7 +400,7 @@ PRIVACY_FUNCTIONS = {
     "adaptive_num_loss": adaptive_num_loss,
     "adaptive_dcr_cat_loss": dcr_cat_loss,
     "adaptive_dcr_num_loss": dcr_num_loss,
-    "adaptive_nndr_cat_loss": categorical_nndr_loss,
+    "adaptive_nndr_cat_loss": categorical_nndr_loss,  # Note: This loss is generally not effective for learning, but is included as categorical NNDR loss.
     "adaptive_nndr_num_loss": numerical_nndr_loss,
     "adaptive_gower_cat_loss": compute_gower_cat,
     "adaptive_gower_num_loss": compute_gower_num

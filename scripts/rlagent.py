@@ -54,13 +54,14 @@ def save_file(parent_dir, config_path):
         pass
 
 class State(Enum):
-    """Represents the privacy state of the RL agent based on evaluation metrics."""
+    """Depricated Approach. Discrete states, represents the privacy state of the RL agent based on evaluation metrics."""
     HIGH = 0
     LOW_DCR = "dcr"
     LOW_NNDR = "nndr"
     LOW_GOWER = "gower"
     
 class LowHighState(Enum):
+    """Deprecated approach. Discrete states, only HIGH and LOW, determined by a single privacy metric threshold."""
     HIGH = 0
     LOW = 1
     
@@ -70,10 +71,11 @@ PRIVACY_TO_STATE = {
     "gower": State.LOW_GOWER
     
 }
-    
+
+
 class Action(Enum):
-    Conventional = "Model in high privacy state, train with conventional loss function"
-    Privacy = "Model in low privacy state, train with privacy-preserving loss function"
+    Conventional = "Model in high privacy state, train with conventional loss function to generate realistic data"
+    Privacy = "Model in low privacy state, train with privacy-preserving loss function to sample more private data"
 
 
 class RLAgent:
@@ -81,30 +83,28 @@ class RLAgent:
         """
         RL Agent for training a diffusion model with privacy considerations. One agent for one dataset.
         Args:
-            name (str): Name of the agent
-            steps_per_round(int, optional): number of steps to train after each interaction with environment. Defaults to 2000.
+            name (str, optional): Name of the agent
             evaluation_samples(int, optional): number of samples used to evaluate state
             args: arguments passed from command line call
             raw_config: configuration dictionary from config.toml
-            rounds (int, optional): Number of training rounds the agent should do. Each training round is a multi-step training process, determined by argument steps_per_round.
-            pretrain_steps (int, optional): number of steps of pretraining before considering privacy. Defaults to steps_per_round (2000).
+            rounds (int, optional): Number of training rounds the agent should do. Each training round is a multi-step training process, determined by argument steps_per_round in config.toml, 1000 per default.
+            pretrain_steps (int, optional): number of steps of pretraining before considering privacy. Defaults to steps_per_round (1000). Can be specified at instantiation or in config.toml under [train.main].
         """
         self.name = name
         self.evaluation_samples = evaluation_samples
         self.__state = State.HIGH
-        self.privacy_cycle = cycle(PRIVACY_CONFIG_DICT.keys())
+        self.privacy_cycle = cycle(PRIVACY_CONFIG_DICT.keys())  # depricated, only used for vector approach
         self.loss_history = pd.DataFrame(columns=LOSS_HISTORY_COLUMNS)
 
         self.args = args  # loss vector approach saved in self.args.vector
         self.raw_config = raw_config
         self.device = device
         
-        
-        # self.privacy_metric = self.raw_config['privacy_metric'] if ('privacy_metric' in self.raw_config and self.raw_config['privacy_metric'] in PRIVACY_CONFIG_DICT.keys()) else DEFAULT_PRIVACY_METRIC
         self.privacy_threshold = self.load_privacy_config()
         self.evaluation_file = self.raw_config['evaluation_file'] if ('evaluation_file' in self.raw_config) and (self.raw_config['evaluation_file'].endswith(".json")) else "SynTabRL_eval.json"
         
         self.steps_per_round = self.raw_config['train']['main']['steps_per_round '] if 'steps_per_round' in self.raw_config['train']['main'] else 1000
+        # Assert that steps_per_round can divide total training steps, otherwise the agent will not be able to consistently train in rounds.
         if self.raw_config['train']['main']['steps'] % self.steps_per_round != 0:
             self.steps_per_round = 1000
             if self.raw_config['train']['main']['steps'] % self.steps_per_round != 0:
@@ -113,25 +113,19 @@ class RLAgent:
         self.pretrain_steps = pretrain_steps if pretrain_steps else self.raw_config['train']['main']['pretrain_steps'] if 'pretrain_steps' in self.raw_config['train']['main'] else self.steps_per_round
         self.rounds = rounds if rounds else int(self.raw_config['train']['main']['steps'] / self.steps_per_round)
         self.total_steps = self.raw_config['train']['main']['steps'] + self.pretrain_steps
-        self.completed_steps = 0
+        self.completed_steps = 0  # keep track of complete training progress
         self.actual_training_steps = 0  # to keep track of actual training steps excluding pretraining steps, used for logging and checkpointing purposes
         self.privacy_discount = self.raw_config['train']['main']['privacy_discount'] if "privacy_discount" in self.raw_config['train']['main'] else 0.1
         
+        # Softmin hyperparameter
         self.logsumexp_sigma = self.raw_config['train']['main']['logsumexp_sigma'] if 'logsumexp_sigma' in self.raw_config['train']['main'] else 0.01
         
         # Load real data for initial training and evaluation
         self.mm, self.ohe, self.X_num_real, self.X_cat_real = None, None, None, None    # X_cat_real is the onehot encoded categorical features of real data
-        # Load real data with currently fitted mm and ohe if available
-        extra_info = generate_dataset_info(real_data_path=self.raw_config['real_data_path'], change_val=self.args.change_val)  # generates DatasetInfo and saves to dataset_info folder if not already exists
-
-        self.real_data, self.target_size, self.dataset_info = self.load_real_data(self.raw_config['real_data_path'])  # loads
-        self.real_data = np.asarray(self.real_data)
         
-        # Load real data for initial training and evaluation
-        self.mm, self.ohe, self.X_num_real, self.X_cat_real = None, None, None, None    # X_cat_real is the onehot encoded categorical features of real data
-        # Load real data with currently fitted mm and ohe if available
         extra_info = generate_dataset_info(real_data_path=self.raw_config['real_data_path'], change_val=self.args.change_val)  # generates DatasetInfo and saves to dataset_info folder if not already exists
 
+        # Load real data with currently fitted mm and ohe if available
         self.real_data, self.target_size, self.dataset_info = self.load_real_data(self.raw_config['real_data_path'])  # loads
         self.real_data = np.asarray(self.real_data)
                 
@@ -191,16 +185,10 @@ class RLAgent:
         
         self.X_num_real = X_num_real  # Save for later use in load_fake_data
         
-        # print(f"in load_real_data, self.mm: {self.mm}")
         mm = self.mm if self.mm else MinMaxScaler().fit(X_num_real)
-        # self.mm = MinMaxScaler().fit(X_num_real) if self.mm is None else self.mm
 
         X_real = mm.transform(X_num_real)
         X_real = np.clip(X_real, 0, 1)
-        has_negative = (X_real < 0).any()
-        # print(f"in load_real_data, real data transformed with mm has negative: {has_negative}")
-        has_larger = (X_real > 1).any()
-        # print(f"in load_real_data, real data transformed with mm has larger than 1: {has_larger}")
 
         if X_cat_real is not None:
             if self.ohe is None:  # First time loading real data
@@ -219,9 +207,8 @@ class RLAgent:
         """
         fake_path = self.raw_config['parent_dir']
         if for_training:
-            print(f"Using lib.read_pure_data to read generated data from {fake_path}.")
             X_num_fake, X_cat_fake, y_gen = lib.read_pure_data(fake_path, 'train')
-        st = time.time()
+
         if self.task_type == 'regression':
             X_num_fake = np.concatenate([X_num_fake, y_gen[:, np.newaxis]], axis=1)
         else:  # classification, binclass or multiclass
@@ -240,33 +227,17 @@ class RLAgent:
         combined_num = np.concatenate([self.X_num_real, X_num_fake], axis=0)
         if for_training or self.mm is None:
             self.mm = MinMaxScaler().fit(combined_num)
-        # self.mm = MinMaxScaler().fit(X_num_fake)
         X_fake = self.mm.transform(X_num_fake)
-        has_larger = (X_fake > 1).any()
-        has_negative = (X_fake < 0).any()
-        # print(f"in load_fake_data, X_fake has elements > 1: {has_larger}.")
-        # print(f"In rlagent.py, load_fake_data(), X_fake has negative: {has_negative}")
-        if has_larger or has_negative:
-            print("X_fake has elements larger than 1 or negative after MinMaxScaler transform before clipping.")
+
         X_fake = np.clip(X_fake, 0, 1)
         if (X_cat_fake is not None) and (self.ohe is not None):
             X_cat_fake = self.ohe.transform(X_cat_fake) / np.sqrt(2)
             X_fake = np.concatenate([X_fake, X_cat_fake.todense()], axis=1)
         
-        has_negative = (X_fake < 0).any()
-        # print(f"In rlagent.py, load_fake_data(), X_fake that is fitted with X_num_fake has negative: {has_negative}")
-        
             
-        # Everytime we call call load_fake_data, we also reload real data to avoid data leakage due to fitted mm and ohe    
+        # Everytime we call call load_fake_data, we also reload real data to avoid data leakage due to newly fitted mm and ohe    
         self.real_data, self.target_size, self.dataset_info = self.load_real_data(self.raw_config['real_data_path'])  # loads
         self.real_data = np.asarray(self.real_data)
-        
-        has_negative = (self.real_data < 0).any()
-        # print(f"In rlagent.py, load_fake_data89, self.real_data transformed with X_num_fake has negative: {has_negative}")
-        
-        
-        et = time.time()
-        # print(f"load_fake_data time: {et-st}s")
         return X_fake
     
     
@@ -340,76 +311,30 @@ class RLAgent:
     
     def run_algorithm(self):
         """
-        RL agent algorithm. Interact with environment and take action for n rounds, then log results.
-        Pretraining takes place at Agent object instantiation (__init__ function).
+        RL agent algorithm. Interacts with environment and takes action for n rounds, then logs results.
+        Pretraining takes place at beginning of algorithm, via self.load_checkpoint() call.
         """
         start = time.time()
         counter = 0
         print("Starting RL Agent training algorithm.")
         self.load_checkpoint()
+        run_round = self._get_execution_strategy()  # Get the appropriate method for the current approach
 
         for _ in range(self.rounds):
             st = time.time()
             counter += 1
             X_num, X_cat, y_gen = self.generate_samples()
-            if self.args.vector_approach:
-                self.__state = self.evaluate_state_vector(X_num, X_cat, y_gen)
-                print(f"=== RL Agent Round {counter} ===")
-                print(f"State: {self.get_state().name}")
-                train_result = self.train_model_vector()
-            elif self.args.weighted_vector:
-                print("Using weighted vector approach.")
-                self.__state = self.evaluate_state(X_num, X_cat, y_gen)
-                print(f"=== RL Agent Round {counter} ===")
-                print(f"State: {self.get_state().name}")
-                train_result = self.train_model_weighted_vector()
-            elif self.args.sum_approach:
-                print("Using sum approach.")
-                eval_metrics = self.evaluate_state_vector(X_num, X_cat, y_gen)
-                print(f"=== RL Agent Round {counter} ===")
-                print(f"State: {eval_metrics}")
-                train_result = self.train_model_sum(eval_metrics)
-            elif self.args.metric:
-                print(f"Using single metric approach on {self.args.metric}.")
-                self.__state = self.evaluate_state_single_metric(X_num, X_cat, y_gen, self.args.metric)
-                print(f"=== RL Agent Round {counter} ===")
-                print(f"State: {self.get_state().name}")
-                train_result = self.train_model_single_metric(self.args.metric)
-            elif self.args.continuous_approach:
-                self.__state = self.evaluate_state_continuous(X_num, X_cat, y_gen)
-                print(f"=== RL Agent Round {counter} ===")
-                print(f"Continuous State: {self.__state}")
-                weighting_factors = self.continuous_weighting_factors(self.__state)
-                train_result = self.train_model_continuous(weighting_factors)
-            elif self.args.adaptive_approach:
-                print("Using adaptive approach.")
-                self.__state = self.evaluate_state_continuous(X_num, X_cat, y_gen)
-                print(f"=== RL Agent Round {counter} ===")
-                print(f"Continuous State: {self.__state}")
-                weighting_factors = self.continuous_weighting_factors()
-                train_result = self.train_model_adaptive(weighting_factors)
-            elif self.args.adaptive_single_metric:
-                print("Using adaptive approach only on single metric.")
-                single_metric = "adaptive_" + self.args.adaptive_single_metric
-                self.__state = self.evaluate_state_continuous(X_num, X_cat, y_gen)
-                print(f"=== RL Agent Round {counter} ===")
-                print(f"Continuous State: {self.__state}")
-                weighting_factors = self.continuous_weighting_factors()
-                train_result = self.train_model_adaptive(weighting_factors, privacy_metric=single_metric)
-            else:
-                raise ValueError(f"Invalid flag for approach. Select one of the following:\n {APPROACH_FLAGS}")          
-                """      
-                self.__state = self.evaluate_state(X_num, X_cat, y_gen)
-                print(f"=== RL Agent Round {counter} ===")
-                print(f"State: {self.get_state().name}")
-                train_result = self.train_model()
-                """
+            train_result =run_round(X_num, X_cat, y_gen, counter)  # Execute the training function for the current approach
+
+            # One round of training is complete. Log results, save checkpoint, and move on to next round.
             self.loss_history = pd.concat([self.loss_history, train_result], axis=0, ignore_index=True)
             self.completed_steps += self.steps_per_round
             self.actual_training_steps += self.steps_per_round
             self.save_checkpoint()
             et = time.time()
             print(f"Round {counter} training time: {et-st}s")
+            
+        # Training phase is complete, now generate final evaluation and remove checkpoint to indicate completion of training.
         X_num, X_cat, y_gen = self.generate_samples(self.evaluation_samples)
         final_state = self.evaluate_state(X_num, X_cat, y_gen)
         self.remove_checkpoint()
@@ -417,24 +342,137 @@ class RLAgent:
         # Generate evaluation.txt
         elapsed = time.time() - start
         if self.args.eval:
-            self.evaluate_generation(elapsed_time=elapsed)
+            self.eval_generation(elapsed_time=elapsed)
         self.loss_history.to_csv(os.path.join(self.raw_config['parent_dir'], 'RLAgentLoss.csv'), index=True)
             
-    # ------------ End of run_algorithm() ---------------------------   
+    # ------------ End of run_algorithm() ---------------------------  
+    
+    # ------------ Functions for different training approaches --------------------------------
+    
+    def _get_execution_strategy(self):
+        """
+        Maps configuration flags to the appropriate internal training method.
+        """
+        # Active Approaches
+        if self.args.adaptive_approach:
+            print("Using adaptive approach.")
+            return self._run_adaptive_step
+        if self.args.adaptive_single_metric:
+            print("Using adaptive approach only on single metric.")
+            return self._run_adaptive_single_metric
+
+        # Deprecated Approaches
+        if self.args.vector_approach:
+            print("Using vector approach.")
+            return self._run_vector_step
+        if self.args.weighted_vector:
+            print("Using weighted vector approach.")
+            return self._run_weighted_vector_step
+        if self.args.sum_approach:
+            print("Using sum approach.")
+            return self._run_sum_step
+        if self.args.metric:
+            print("Using single metric approach.")
+            return self._run_single_metric_step
+        if self.args.continuous_approach:
+            print("Using continuous approach.")
+            return self._run_continuous_step
+
+        raise ValueError(f"Invalid flag for approach. Select one of: {APPROACH_FLAGS}")
+    
+    
+    def _run_adaptive_step(self, X_num, X_cat, y_gen, counter):
+        """
+        The proposed summation-based approach of SynTabRL. Use DCR, NNDR, Gower's DCR as privacy learning signal.
+        Continuous state space, adaptive weights based on current privacy evaluation and training progress. 
+        Gradient Clipping is included to avoid overaggressive diffusion model parameter updates.
+        """        
+        self.__state = self.evaluate_state_continuous(X_num, X_cat, y_gen)
+        print(f"=== RL Agent Round {counter} ===")
+        print(f"Continuous State: {self.__state}")
+        weighting_factors = self.continuous_weighting_factors()
+        train_result = self.train_model_adaptive(weighting_factors)
+        return train_result
+    
+    
+    def _run_adaptive_single_metric(self, X_num, X_cat, y_gen, counter):    
+        single_metric = "adaptive_" + self.args.adaptive_single_metric
+        self.__state = self.evaluate_state_continuous(X_num, X_cat, y_gen)
+        print(f"=== RL Agent Round {counter} ===")
+        print(f"Continuous State: {self.__state}")
+        weighting_factors = self.continuous_weighting_factors()
+        train_result = self.train_model_adaptive(weighting_factors, privacy_metric=single_metric)
+        return train_result
+    
+    
+    # Depricated, abandoned approaches 
+    def _run_vector_step(self, X_num, X_cat, y_gen, counter):
+        """Depricated approach. Pass loss as vector of multiple privacy metrics, train with vectorized loss function."""
+        self.__state = self.evaluate_state_vector(X_num, X_cat, y_gen)
+        print(f"=== RL Agent Round {counter} ===")
+        print(f"State: {self.get_state().name}")
+        train_result = self.train_model_vector()
+        return train_result
+    
+    def _run_weighted_vector_step(self, X_num, X_cat, y_gen, counter):
+        """Depricated Approach. Pass privacy losses as vector, one of which is weighted twice as much when in low privacy state."""        
+        self.__state = self.evaluate_state(X_num, X_cat, y_gen)
+        print(f"=== RL Agent Round {counter} ===")
+        print(f"State: {self.get_state().name}")
+        train_result = self.train_model_weighted_vector()
+        return train_result
+    
+    def _run_sum_step(self, X_num, X_cat, y_gen, counter):
+        """Depricated approach. Sum multiple privacy metrics into a single privacy loss, train with conventional loss function."""
+        eval_metrics = self.evaluate_state_vector(X_num, X_cat, y_gen)
+        print(f"=== RL Agent Round {counter} ===")
+        print(f"State: {eval_metrics}")
+        train_result = self.train_model_sum(eval_metrics)
+        return train_result
+    
+    def _run_single_metric_step(self, X_num, X_cat, y_gen, counter):
+        """Depricated approach. Train on a single privacy metric as privacy learning signal."""
+        self.__state = self.evaluate_state_single_metric(X_num, X_cat, y_gen, self.args.metric)
+        print(f"=== RL Agent Round {counter} ===")
+        print(f"State: {self.get_state().name}")
+        train_result = self.train_model_single_metric(self.args.metric)
+        return train_result
+    
+    def _run_continuous_step(self, X_num, X_cat, y_gen, counter):
+        """Depricated approach. Continuous privacy state based on multiple privacy metrics. With simple, non-adaptive weightings on privacy loss terms."""
+        self.__state = self.evaluate_state_continuous(X_num, X_cat, y_gen)
+        print(f"=== RL Agent Round {counter} ===")
+        print(f"Continuous State: {self.__state}")
+        weighting_factors = self.continuous_weighting_factors(self.__state)
+        train_result = self.train_model_continuous(weighting_factors)
+        return train_result
+    
+# --------- End of training approaches ----------------------
+
+
+    
+    
+# --------- Training checkpoint management functions ----------------------
+
     def save_checkpoint(self):
-        checkpoint_path = os.path.join(self.raw_config['parent_dir'], 'checkpoint.pt')
+        """Saves training progress after each round."""
+        checkpoint_dir = os.path.join(self.raw_config['parent_dir'], 'checkpoint')
+        if not os.path.exists(checkpoint_dir):
+            os.makedirs(checkpoint_dir, exist_ok=True)
+        checkpoint_path = os.path.join(checkpoint_dir, 'checkpoint.pt')
         torch.save({
             'completed_steps': self.completed_steps, 
             'actual_training_steps': self.actual_training_steps,
         }, checkpoint_path)
         
+
     def load_checkpoint(self):
-        checkpoint_path = os.path.join(self.raw_config['parent_dir'], 'checkpoint.pt')
+        """Loads training progress if checkpoint exists, otherwise starts pretraining."""
+        checkpoint_path = os.path.join(self.raw_config['parent_dir'], 'checkpoint', 'checkpoint.pt')
         if os.path.exists(checkpoint_path):
             checkpoint = torch.load(checkpoint_path, map_location=self.device)
             if checkpoint["completed_steps"] >= self.total_steps:
-                print("Checkpoint indicates training already completed. Starting from scratch.")
-                print("Pretraining in load_checkpoint.")
+                print("Checkpoint indicates training already completed. Starting from pretraining.")
                 self.pretrain()
                 return
             self.completed_steps = checkpoint["completed_steps"]
@@ -445,14 +483,19 @@ class RLAgent:
             print(f"Adjusted remaining rounds to {self.rounds} based on loaded checkpoint.")
             
         else:
-            print("No checkpoint found. Starting from scratch.")
-            print("Pretraining in load_checkpoint.")
+            print("No checkpoint found. Starting from pretraining.")
             self.pretrain()
     
     def remove_checkpoint(self):
-        checkpoint_path = os.path.join(self.raw_config['parent_dir'], 'checkpoint.pt')
+        """Removes checkpoint after training is complete."""
+        checkpoint_path = os.path.join(self.raw_config['parent_dir'], 'checkpoint')
         if os.path.exists(checkpoint_path):
-            os.remove(checkpoint_path)    
+            shutil.rmtree(checkpoint_path)  
+            
+# --------- End of checkpoint management functions ----------------------            
+
+
+# --------- train() function call for different aproaches ----------------------
     
     def continuous_weighting_factors(self):
         """
@@ -460,16 +503,15 @@ class RLAgent:
         Use progress to scale the weights, so that at the beginning of training, the privacy weights are small, and at the end of training, the weights are larger.
         Depend on current privacy level? If not, how to pick arbitrarily?
         
-        Args:
-            eval_metrics (dict): Dictionary containing the evaluation metrics.
         Returns:
             list: Weighting factors for loss function.
         """
         dcr, nndr, gower = self.__state.values()
         progress = self.completed_steps / self.total_steps
         weights = {}
-        # weights['dcr'] = self.privacy_threshold['dcr'] / dcr * progress
-        weights['dcr'] = self.privacy_threshold['dcr'] / np.exp(-dcr) * progress
+
+        # transform with exp(-dcr) to scale down gradient value to same range as nndr, gower
+        weights['dcr'] = self.privacy_threshold['dcr'] / np.exp(-dcr) * progress  
         weights['nndr'] = self.privacy_threshold['nndr'] / nndr * progress
         weights['gower'] = self.privacy_threshold['gower'] / gower * progress
         
@@ -478,6 +520,7 @@ class RLAgent:
         
     def get_loss_weight_mask(self):
         """
+        Depricated.
         Create a weight mask for the privacy-preserving loss function based on feature types.
         The order is [dcr, nndr, gower]
         
@@ -494,11 +537,12 @@ class RLAgent:
             raise TypeError("get_loss_weight_mask called in HIGH privacy state, which is invalid.")
     
     def train_model_adaptive(self, weighting_factors, privacy_metric='adaptive'):
-        # The Agent trains with the privacy loss(es) that display a low privacy level
+        """
+        The training function of the proposed approaches. Computes adaptive weights based on current privacy evaluation, 
+        and trains the model with the adaptive privacy-preserving loss function. Softer states transitions.
+        """
         
-        # Softer state transitions    
-        
-        print("Train with continuous privacy loss.")
+        print("Train with continuous, adaptive privacy loss.")
         
         assert self.privacy_threshold.keys() == self.__state.keys(), "Mismatching privacy threshold keys and privacy metrics at training time."
         is_high_privacy = True
@@ -528,68 +572,16 @@ class RLAgent:
                 change_val=self.args.change_val,
                 continue_training=True,
                 privacy_metric=privacy_metric,  # continuous approach has similarity with vector approach, recycle vector approach code
-                weight_mask=adaptive_weights,  # conversion to torch tensor in train(), requires_grad = False
+                weight_mask=adaptive_weights,  # conversion to torch tensor in train() of train.py, requires_grad = False
                 completed_steps=self.completed_steps,
                 total_steps=self.total_steps
             )
-        # Softer state transitions     
         
-        
-        """    
-        # Hard state cutoff
-        
-        
-        
-        
-        if is_high_privacy:
-            return train(
-                steps=self.steps_per_round,
-                start_privacy_step=-1,
-                lr = self.raw_config['train']['main']['lr'],
-                weight_decay = self.raw_config['train']['main']['weight_decay'],
-                batch_size=self.raw_config['train']['main']['batch_size'],
-                **self.raw_config['diffusion_params'],
-                parent_dir=self.raw_config['parent_dir'],
-                real_data_path=self.raw_config['real_data_path'],
-                model_type=self.raw_config['model_type'],
-                model_params=self.raw_config['model_params'],
-                T_dict=self.raw_config['train']['T'],
-                num_numerical_features=self.raw_config['num_numerical_features'],
-                device=self.device,
-                change_val=self.args.change_val,
-                continue_training=True,
-                completed_steps=self.completed_steps,
-                total_steps=self.total_steps
-            )
-        else: # low privacy state, train with privacy loss
-            print("Train with privacy loss with adaptive weights:", adaptive_weights)
-            return train(
-                steps=self.steps_per_round,
-                start_privacy_step=0,
-                lr = self.raw_config['train']['main']['lr'],
-                weight_decay = self.raw_config['train']['main']['weight_decay'],
-                batch_size=self.raw_config['train']['main']['batch_size'],
-                **self.raw_config['diffusion_params'],
-                parent_dir=self.raw_config['parent_dir'],
-                real_data_path=self.raw_config['real_data_path'],
-                model_type=self.raw_config['model_type'],
-                model_params=self.raw_config['model_params'],
-                T_dict=self.raw_config['train']['T'],
-                num_numerical_features=self.raw_config['num_numerical_features'],
-                device=self.device,
-                change_val=self.args.change_val,
-                continue_training=True,
-                privacy_metric="adaptive",  # continuous approach has similarity with vector approach, recycle vector approach code
-                weight_mask=adaptive_weights,  # conversion to torch tensor in train(), requires_grad = False
-                completed_steps=self.completed_steps,
-                total_steps=self.total_steps
-            )
-            # Hard state cutoff
-            
-            """ 
             
     def train_model_continuous(self, weighting_factors):
-        # The Agent trains with the privacy loss(es) that display a low privacy level
+        """
+        Depricated approach. Continuous privacy state, no adaptive weights. 
+        """
         print("Train with continuous privacy loss.")
 
         assert self.privacy_threshold.keys() == self.__state.keys(), "Mismatching privacy threshold keys and privacy metrics at training time."  
@@ -616,6 +608,11 @@ class RLAgent:
         )
      
     def train_model_weighted_vector(self):
+        """
+        Depricated approach. Discrete privacy state determined by multiple metrics, train with privacy-preserving 
+        loss function weighted based on which metric is in low privacy state.
+        When in low privacy state, weight the loss term corresponding to the low privacy metric twice as much as other loss terms.
+        """
         state = self.get_state()
         if state == State.HIGH:
             action = Action.Conventional
@@ -623,7 +620,7 @@ class RLAgent:
             # Take action Conventional
             return train(
                 steps=self.steps_per_round,
-                start_privacy_step=-1,
+                start_privacy_step=-1,  # train without privacy loss, i.e. TabDDPM training
                 lr = self.raw_config['train']['main']['lr'],
                 weight_decay = self.raw_config['train']['main']['weight_decay'],
                 batch_size=self.raw_config['train']['main']['batch_size'],
@@ -668,6 +665,11 @@ class RLAgent:
      
         
     def train_model_vector(self):
+        """
+        Depricated approach. Discrete privacy state determined by multiple metrics, 
+        no weighting of loss terms, i.e. all privacy loss terms weighted equally when in low privacy state.
+        Privacy loss propogated as vector of [DCR, NNDR, Gower].
+        """
         st = time.time()
         state = self.get_state()
         if state == LowHighState.HIGH:
@@ -720,6 +722,13 @@ class RLAgent:
         print(f"train_model_vector time: {elapsed}s")
         
     def train_model_sum(self, eval_metrics):
+        """
+        Depricated approach. Discrete privacy state determined by sum of multiple metrics, train with 
+        privacy-preserving loss function weighted based on the sum of the metrics.
+        When in low privacy state, weight the loss term corresponding to the low privacy metric twice as
+        much as other loss terms.
+        """
+        
         state = self.get_state()
         action = Action.Privacy
         print("Train with sum privacy loss.")
@@ -749,214 +758,13 @@ class RLAgent:
             weight_mask=weights
         )
 
-            
-    def evaluate_state_continuous(self, X_num, X_cat, y_gen, for_training=True):
-        """
-        Evaluates the privacy state of the model based on generated samples, if one of the privacy metrics
-        is below threshold, return Low state, else High state. 
-        I.e. Convert from State enum to LowHighState enum.
-        """
-        X_fake = self.load_fake_data(X_num, X_cat, y_gen, for_training=for_training)
-        X_fake = np.asarray(X_fake)
-        
-        distance_parameters = {
-        "original": self.real_data,
-        "synthetic": X_fake,
-        "num_numerical_features": self.raw_config["num_numerical_features"],
-        "category_sizes": self.category_sizes,
-        "task_type": self.task_type
-        }
-        
-        eval_metrics = {}
-        eval_metrics["dcr"] = compute_dcr(**distance_parameters, distance_metric='euclidean')
-        eval_metrics["nndr"] = compute_nndr(**distance_parameters, distance_metric='euclidean')
-        gower_matrix = compute_gowers_DCR(**distance_parameters)
-        eval_metrics["gower"] = gower_matrix
-        
-        return eval_metrics
-
-        
-    def evaluate_generation(self, elapsed_time=None, X_num=None, X_cat=None, y_gen=None):
-        """
-        Generates final evaluation of the trained model using all available samples.
-        """
-        if y_gen is None:
-            X_num, X_cat, y_gen = self.generate_samples(self.raw_config['sample']['num_samples'])
-        synthetic_data = self.load_fake_data(X_num, X_cat, y_gen)
-        stats, scores = evaluate_generation(synthetic=synthetic_data, original=self.real_data, num_numerical_features=self.raw_config['num_numerical_features'], category_sizes=self.category_sizes, task_type=self.task_type)
-        res = self.evaluate_ml()
-        
-        eval_result = stats | scores | res.get_metrics()
-        minutes, seconds = divmod(elapsed_time, 60)
-        eval_result["elapsed_time"] = f"Total training time: {int(minutes)} min {seconds:.2f} sec"
-        eval_path = str(Path(self.raw_config['parent_dir']) / self.evaluation_file)
-        lib.dump_json(eval_result, eval_path)
-        """
-        with open(os.path.join(self.raw_config['parent_dir'], self.evaluation_file), 'w') as file:
-            
-            file.write(f"Similarity and Privacy evaluation\n")
-            for key, value in stats.items():
-                file.write(f"{key}: {value}\n")
-            file.write(f"\nAbsolute Difference of Basic Statistics:\n")
-            for key, value in scores.items():
-                file.write(f"{key}: {value}\n")
-            file.write("Statistics computed column-wise, then average is taken.\n")  
-            
-            file.write(f"\nMachine Learning Evaluation Results:\n")
-            file.write(f"{res.get_metrics()}\n")
-                
-            if elapsed_time is not None:
-                minutes, seconds = divmod(elapsed_time, 60)
-                print(f"Total training time: {int(minutes)} min {seconds:.2f} sec")
-                file.write(f"\nTotal training time: {int(minutes)} min {seconds:.2f} sec\n")
-        """
-        
-        
-    def generate_samples(self, num_samples=5000, seed_offset=0, **kwargs):
-        """Generates samples using the current model and configuration. 2000 by default"""
-        num_samples = num_samples
-        return sample(
-            num_samples=num_samples,
-            batch_size=self.raw_config['sample']['batch_size'],
-            disbalance=self.raw_config['sample'].get('disbalance', None),
-            **self.raw_config['diffusion_params'],
-            parent_dir=self.raw_config['parent_dir'],
-            real_data_path=self.raw_config['real_data_path'],
-            model_path=os.path.join(self.raw_config['parent_dir'], 'model.pt'),
-            model_type=self.raw_config['model_type'],
-            model_params=self.raw_config['model_params'],
-            T_dict=self.raw_config['train']['T'],
-            num_numerical_features=self.raw_config['num_numerical_features'],
-            device=self.device,
-            seed=self.raw_config['sample'].get('seed', 0)+seed_offset,
-            change_val=self.args.change_val
-        )
-
-
-    def evaluate_state(self, X_num, X_cat, y_gen):
-        """
-        Evaluates the privacy state of the model based on generated samples.
-        
-        Args:
-            X_num (np.ndarray): Numerical features of generated samples.
-            X_cat (np.ndarray): Categorical features of generated samples.
-            y_gen (np.ndarray): Generated target variable.
-            K (list): Category sizes for categorical features.
-        Returns:
-            State: The evaluated privacy state (HIGH or LOW).
-        
-        """
-        
-        # Concatenate synthetic data into a single matrix like in evaluate_privacy.load_data()
-       
-        X_fake = self.load_fake_data(X_num, X_cat, y_gen)
-        X_fake = np.asarray(X_fake)
-        start = time.time()
-        
-        distance_parameters = {
-        "original": self.real_data,
-        "synthetic": X_fake,
-        "num_numerical_features": self.raw_config["num_numerical_features"],
-        "category_sizes": self.category_sizes,
-        "task_type": self.task_type
-        }
-        
-        eval_metrics = {}
-        eval_metrics["dcr"] = compute_dcr(**distance_parameters, distance_metric='euclidean')
-        eval_metrics["nndr"] = compute_nndr(**distance_parameters, distance_metric='euclidean')
-        # gower_matrix = compute_gowers_distance(**distance_parameters)
-        # eval_metrics["gower"] = np.mean(gower_matrix)
-        eval_metrics["gower"] = compute_gowers_DCR(**distance_parameters)
-        end = time.time()
-        print(f"Evaluation time: {end-start}s")
-        print(f"dcr: {eval_metrics['dcr']}, nndr: {eval_metrics['nndr']}, gower: {eval_metrics['gower']}")
-        
-
-        for i in range(len(PRIVACY_CONFIG_DICT.keys())):
-            
-            # Using circular list to avoid retraining on the same privacy metric
-            key = next(self.privacy_cycle)
-            # print(f"Evaluate on privacy metric: {key}")
-            
-            # prevent state deadlock, dont train in same state twice in a row
-            # if self.get_state().value == key:
-                # continue  
-                
-            if eval_metrics[key] < self.privacy_threshold[key]:
-               print(f"{key}: {eval_metrics[key]:.4f} (Benchmark: {self.privacy_threshold[key]})")
-               self.__state = PRIVACY_TO_STATE[key]
-               return self.__state
-               
-            """        
-            # Old implementation, abandoned on 02.12.2025
-            if key == "nndr" and eval_metrics[key] > self.privacy_threshold[key]:
-                print(f"{key}: {eval_metrics[key]:.4f} (Benchmark: {self.privacy_threshold[key]})")
-                self.__state = State.LOW_NNDR
-                return State.LOW_NNDR
-            
-            elif key == "dcr" and eval_metrics[key] < self.privacy_threshold[key]:
-                print(f"{key}: {eval_metrics[key]:.4f} (Benchmark: {self.privacy_threshold[key]})")
-                self.__state = State.LOW_DCR
-                return State.LOW_DCR
-            
-            elif key == "gower" and eval_metrics[key] < self.privacy_threshold[key]:
-                print(f"{key}: {eval_metrics[key]:.4f} (Benchmark: {self.privacy_threshold[key]})")
-                self.__state = State.LOW_GOWER
-                return State.LOW_GOWER
-                
-            """
-        return State.HIGH
-    
-    def evaluate_state_single_metric(self, X_num, X_cat, y_gen, single_metric):
-        """
-        Evaluates the privacy state of the model based on generated samples and a single privacy metric.
-        
-        Args:
-            X_num (np.ndarray): Numerical features of generated samples.
-            X_cat (np.ndarray): Categorical features of generated samples.
-            y_gen (np.ndarray): Generated target variable.
-            K (list): Category sizes for categorical features.
-        Returns:
-            State: The evaluated privacy state (HIGH or LOW).
-            """
-        def get_gower_mean(**params):
-            return np.mean(compute_gowers_distance(**params))
-        
-        lookup = {
-            "dcr": compute_dcr,
-            "nndr": compute_nndr,
-            "gower": compute_gowers_DCR
-        }    
-        assert single_metric in lookup.keys(), f"In RLAgent.evaluate_state_single_metric, single_metric must be one of {lookup.keys()}"
-        X_fake = self.load_fake_data(X_num, X_cat, y_gen)
-        X_fake = np.asarray(X_fake)
-        start = time.time()
-        
-        distance_parameters = {
-        "original": self.real_data,
-        "synthetic": X_fake,
-        "num_numerical_features": self.raw_config["num_numerical_features"],
-        "category_sizes": self.category_sizes,
-        "task_type": self.task_type
-        }
-
-        eval_metrics = {}
-        eval_metrics["dcr"] = compute_dcr(**distance_parameters, distance_metric='euclidean')
-        eval_metrics["nndr"] = compute_nndr(**distance_parameters, distance_metric='euclidean')
-        eval_metrics["gower"] = compute_gowers_DCR(**distance_parameters)
-        end = time.time()
-        print(f"Evaluation time: {end-start}s")
-        print(f"dcr: {eval_metrics['dcr']}, nndr: {eval_metrics['nndr']}, gower: {eval_metrics['gower']}")
-        
-        if eval_metrics[single_metric] < self.privacy_threshold[single_metric]:
-            print(f"{single_metric}: {eval_metrics[single_metric]:.4f} (Benchmark: {self.privacy_threshold[single_metric]})")
-            self.__state = PRIVACY_TO_STATE[single_metric]
-            return self.__state
-        else:
-            return State.HIGH
-        
     
     def train_model_single_metric(self, metric):
+        """
+        Depricated approach.
+        The training function of the single metric approach. Trains with privacy-preserving 
+        loss function corresponding to the single privacy metric used for evaluation.
+        """
         state = self.get_state()
         if state == State.HIGH:
             action = Action.Conventional
@@ -1004,12 +812,13 @@ class RLAgent:
                 completed_steps=self.completed_steps,
                 total_steps=self.total_steps
             )
-                
 
 
     def train_model(self) -> DatasetInfo:
         """
-        Set training parameters and settings based on current State.
+        Depricated approach.
+        Set training parameters and settings based on current State, 
+        with a discrete state space.
         """
         state = self.get_state()
         
@@ -1108,8 +917,175 @@ class RLAgent:
         else:
             raise ValueError("Invalid State encountered in RL Agent.")
         
+
+# ------------- End of train() functions for different approaches ----------------------
+
+
+# ------------- Evaluation functions: states and data quality ----------------------
+
+
+        
+    def eval_generation(self, elapsed_time=None, X_num=None, X_cat=None, y_gen=None):
+        """
+        Generates final evaluation of the trained model using available samples.
+        """
+        if y_gen is None:
+            X_num, X_cat, y_gen = self.generate_samples(self.raw_config['sample']['num_samples'])
+        synthetic_data = self.load_fake_data(X_num, X_cat, y_gen)
+
+        # This evaluate_generation function is imported from evaluate_privacy.py, it generates privacy evaluation metrics of the synthetic data
+        stats, scores = evaluate_generation(
+            synthetic=synthetic_data, 
+            original=self.real_data, 
+            num_numerical_features=self.raw_config['num_numerical_features'], 
+            category_sizes=self.category_sizes, 
+            task_type=self.task_type
+        )
+        # Trains a CatBoost model on the synthetic data and evaluates its performance on a real test set, returns the evaluation metrics.
+        res = self.evaluate_ml()
+        
+        eval_result = stats | scores | res.get_metrics()
+        minutes, seconds = divmod(elapsed_time, 60)
+        eval_result["elapsed_time"] = f"Total training time: {int(minutes)} min {seconds:.2f} sec"
+        eval_path = str(Path(self.raw_config['parent_dir']) / self.evaluation_file)
+        lib.dump_json(eval_result, eval_path)
+        
+    
+    def evaluate_state(self, X_num, X_cat, y_gen):
+        """
+        Depricated approach.
+        Evaluates the privacy state of the model based on generated samples.
+        
+        Args:
+            X_num (np.ndarray): Numerical features of generated samples.
+            X_cat (np.ndarray): Categorical features of generated samples.
+            y_gen (np.ndarray): Generated target variable.
+            K (list): Category sizes for categorical features.
+        Returns:
+            State: The evaluated privacy state (HIGH or LOW).
+        
+        """
+        
+        # Concatenate synthetic data into a single matrix like in evaluate_privacy.load_data()
+        X_fake = self.load_fake_data(X_num, X_cat, y_gen)
+        X_fake = np.asarray(X_fake)
+        start = time.time()
+        
+        distance_parameters = {
+            "original": self.real_data,
+            "synthetic": X_fake,
+            "num_numerical_features": self.raw_config["num_numerical_features"],
+            "category_sizes": self.category_sizes,
+            "task_type": self.task_type
+        }
+        
+        eval_metrics = {}
+        eval_metrics["dcr"] = compute_dcr(**distance_parameters, distance_metric='euclidean')
+        eval_metrics["nndr"] = compute_nndr(**distance_parameters, distance_metric='euclidean')
+        eval_metrics["gower"] = compute_gowers_DCR(**distance_parameters)
+        end = time.time()
+        print(f"Evaluation time: {end-start}s")
+        print(f"dcr: {eval_metrics['dcr']}, nndr: {eval_metrics['nndr']}, gower: {eval_metrics['gower']}")
+        
+
+        for i in range(len(PRIVACY_CONFIG_DICT.keys())):
+            
+            # Using circular list to avoid retraining on the same privacy metric
+            key = next(self.privacy_cycle)
+            # print(f"Evaluate on privacy metric: {key}")
+            
+            # prevent state deadlock, dont train in same state twice in a row
+            # if self.get_state().value == key:
+                # continue  
+                
+            if eval_metrics[key] < self.privacy_threshold[key]:
+               print(f"{key}: {eval_metrics[key]:.4f} (Benchmark: {self.privacy_threshold[key]})")
+               self.__state = PRIVACY_TO_STATE[key]
+               return self.__state
+               
+        return State.HIGH
+    
+    
+    def evaluate_state_continuous(self, X_num, X_cat, y_gen, for_training=True):
+        """
+        Evaluates the privacy state of the model based on generated samples, if one of the privacy metrics
+        is below threshold, return Low state, else High state. 
+        I.e. Convert from State enum to LowHighState enum.
+        """
+        X_fake = self.load_fake_data(X_num, X_cat, y_gen, for_training=for_training)
+        X_fake = np.asarray(X_fake)
+        
+        distance_parameters = {
+            "original": self.real_data,
+            "synthetic": X_fake,
+            "num_numerical_features": self.raw_config["num_numerical_features"],
+            "category_sizes": self.category_sizes,
+            "task_type": self.task_type
+        }
+        
+        eval_metrics = {}
+        eval_metrics["dcr"] = compute_dcr(**distance_parameters, distance_metric='euclidean')
+        eval_metrics["nndr"] = compute_nndr(**distance_parameters, distance_metric='euclidean')
+        gower_matrix = compute_gowers_DCR(**distance_parameters)
+        eval_metrics["gower"] = gower_matrix
+        
+        return eval_metrics
+    
+    
+    def evaluate_state_single_metric(self, X_num, X_cat, y_gen, single_metric):
+        """
+        Evaluates the privacy state of the model based on generated samples and a single privacy metric.
+        Used by approaches using a single privacy metric as privacy loss.
+        
+        Args:
+            X_num (np.ndarray): Numerical features of generated samples.
+            X_cat (np.ndarray): Categorical features of generated samples.
+            y_gen (np.ndarray): Generated target variable.
+            K (list): Category sizes for categorical features.
+        Returns:
+            State: The evaluated privacy state (HIGH or LOW).
+        """
+        
+        lookup = {
+            "dcr": compute_dcr,
+            "nndr": compute_nndr,
+            "gower": compute_gowers_DCR
+        }    
+        assert single_metric in lookup.keys(), f"In RLAgent.evaluate_state_single_metric, single_metric must be one of {lookup.keys()}"
+        X_fake = self.load_fake_data(X_num, X_cat, y_gen)
+        X_fake = np.asarray(X_fake)
+        start = time.time()
+        
+        distance_parameters = {
+            "original": self.real_data,
+            "synthetic": X_fake,
+            "num_numerical_features": self.raw_config["num_numerical_features"],
+            "category_sizes": self.category_sizes,
+            "task_type": self.task_type
+        }
+
+        eval_metrics = {}
+        eval_metrics["dcr"] = compute_dcr(**distance_parameters, distance_metric='euclidean')
+        eval_metrics["nndr"] = compute_nndr(**distance_parameters, distance_metric='euclidean')
+        eval_metrics["gower"] = compute_gowers_DCR(**distance_parameters)
+        end = time.time()
+        print(f"Evaluation time: {end-start}s")
+        print(f"dcr: {eval_metrics['dcr']}, nndr: {eval_metrics['nndr']}, gower: {eval_metrics['gower']}")
+        
+        if eval_metrics[single_metric] < self.privacy_threshold[single_metric]:
+            print(f"{single_metric}: {eval_metrics[single_metric]:.4f} (Benchmark: {self.privacy_threshold[single_metric]})")
+            self.__state = PRIVACY_TO_STATE[single_metric]
+            return self.__state
+        else:
+            return State.HIGH
+
         
     def evaluate_ml(self):
+        """
+        Evaluate the machine learning efficiency of the synthetic samples. 
+        Uses TabDDPM ML efficiency evaluation procedure.
+        """
+        
         res = None
         if self.raw_config['eval']['type']['eval_model'] == 'catboost':
             res = train_catboost(
@@ -1140,11 +1116,47 @@ class RLAgent:
                 change_val=self.args.change_val
             )
         return res
+    
+    
+    # ------------- End of evaluation functions ----------------------
+    
+    
+    # ------------- Generate samples and filtering in post-processing ---------------
+    
+        
+    def generate_samples(self, num_samples=5000, seed_offset=0, **kwargs):
+        """Generates samples using the current model and configuration. 5000 by default"""
+        num_samples = num_samples
+        return sample(
+            num_samples=num_samples,
+            batch_size=self.raw_config['sample']['batch_size'],
+            disbalance=self.raw_config['sample'].get('disbalance', None),
+            **self.raw_config['diffusion_params'],
+            parent_dir=self.raw_config['parent_dir'],
+            real_data_path=self.raw_config['real_data_path'],
+            model_path=os.path.join(self.raw_config['parent_dir'], 'model.pt'),
+            model_type=self.raw_config['model_type'],
+            model_params=self.raw_config['model_params'],
+            T_dict=self.raw_config['train']['T'],
+            num_numerical_features=self.raw_config['num_numerical_features'],
+            device=self.device,
+            seed=self.raw_config['sample'].get('seed', 0)+seed_offset,
+            change_val=self.args.change_val
+        )
+                        
                         
     def generate_and_filter_samples_percentile(self, num_samples, value, evaluate_sample_file=False, **kwargs):
+        """
+        Optional filtering in post-processing.
+        Filter out top x% least private generated samples based on Distance to Closest Record (DCR) metric.
+        E.g. to filter out the 10% least private samples, set value = 0.1. If value is None, default to 0.1.
+        """
+        
         assert value is None or (0 <= value <= 1), "In percentile approach, value must be between 0 and 1, representing the percentage of samples to filter out based on DCR."
         if value is None:
             value = 0.1  # default to filtering out the 10% closest samples if no value is provided
+            
+        # Compute how many additional samples to generate to ensure we have enough samples after filtering.    
         buffer_factor = 1 - value
         total_to_generate = math.ceil(num_samples / buffer_factor)
     
@@ -1154,7 +1166,7 @@ class RLAgent:
             eval_metrics_before = self.evaluate_state_continuous(X_num, X_cat, y_gen, for_training=False)
             print(f"Evaluating generated samples before filtering: dcr: {eval_metrics_before['dcr']}, nndr: {eval_metrics_before['nndr']}, gower: {eval_metrics_before['gower']}")
     
-        # 2. Compute Privacy Metric: Distance to Closest Record (DCR)
+        # Compute Privacy Metric: Distance to Closest Record
         # Ensure load_fake_data is processing ALL generated rows
         synthetic_data = self.load_fake_data(X_num, X_cat, y_gen, for_training=False)
         print(f"synthetic_data.shape: {synthetic_data.shape}")
@@ -1174,12 +1186,12 @@ class RLAgent:
         if len(min_distances) != actual_gen_count:
             raise ValueError(f"DCR length ({len(min_distances)}) mismatch with generated samples ({actual_gen_count})")
 
-        # 3. Filter: Remove the 10% smallest distances
+        # Remove the 10% smallest distances
         threshold = np.percentile(min_distances, 10)
         print(f"Threshold at 10th percentile: {threshold:.4f}\nAt 90th percentile: {np.percentile(min_distances, 90):.4f}")
         keep_indices = min_distances > threshold
         
-        # 4. Apply mask and slice to requested num_samples
+        # Apply mask and slice to requested num_samples
         # We use boolean indexing first, then slice the resulting array
         X_num_filtered = X_num[keep_indices][:num_samples] if X_num is not None else None
         
@@ -1188,6 +1200,7 @@ class RLAgent:
         
         y_gen_filtered = y_gen[keep_indices][:num_samples]
         
+        # Record performance gain before and after filtering
         if evaluate_sample_file:
             eval_metrics_after = self.evaluate_state_continuous(X_num_filtered, X_cat_filtered, y_gen_filtered, for_training=False)
             print(f"Evaluating generated samples after filtering: dcr: {eval_metrics_after['dcr']}, nndr: {eval_metrics_after['nndr']}, gower: {eval_metrics_after['gower']}")
@@ -1210,24 +1223,30 @@ class RLAgent:
     
     
     def generate_and_filter_samples_threshold(self, num_samples, value, max_value):
+        """
+        Optional filtering in post-processing.
+        Filter out generated samples that are below a certain DCR threshold. 
+        E.g. to filter out samples with DCR < 0.15, set value = 0.15. If value is None, default to 0.15.
+        """
+        
         if value is None:
             value = 0.15  # default to a DCR threshold of 0.15 if no value is provided
         final_X_num, final_X_cat, final_y = [], [], []
         count = 0
         iterations = 0
-        chunk_size = int(num_samples * 1.2) 
+        chunk_size = int(num_samples * 1.2)  # Sample more than needed to account for filtering
         # Keep going until we have collected exactly num_samples
         while count < num_samples:
-            if iterations >= 10:
+            if iterations >= 10:  # safety check to prevent infinite loop in case of too strict threshold
                 print("Warning: Exceeded 10 iterations in threshold filtering. Consider adjusting the threshold.")
                 break
-            # 1. Generate a chunk of data (generate more than needed to be efficient)
+            # Generate a chunk of data (generate more than needed to be efficient)
             remaining = num_samples - count
             print(f"Remaining samples to generate: {remaining}")
             
             X_n, X_c, y_g = self.generate_samples(num_samples=chunk_size, seed_offset=iterations)
             
-            # 2. Compute DCR for this chunk
+            # Compute DCR for this chunk
             synthetic_data = self.load_fake_data(X_n, X_c, y_g, for_training=False)
             min_distances = compute_dcr(
                 original=self.real_data,
@@ -1238,14 +1257,13 @@ class RLAgent:
                 return_min_distances=True
             )
             
-            # 3. Filter: Only keep samples strictly GREATER than the threshold and SMALLER than optional max_value
+            # Only keep samples strictly GREATER than the threshold and SMALLER than optional max_value
             keep_indices = min_distances > value
             if max_value is not None:
                 keep_indices &= (min_distances < max_value)
             
-            # print(f"Xn.shape: {X_n.shape if X_n is not None else 'None'}, min_distances.shape: {min_distances.shape}, DCR Threshold: {value}")
             
-            # 4. Collect the safe samples
+            # Collect the safe samples
             if X_n is not None:
                 final_X_num.append(X_n[keep_indices])
             if X_c is not None:
@@ -1255,39 +1273,52 @@ class RLAgent:
             # Update our current count
             count += np.sum(keep_indices)
             iterations += 1
-            print(f"Iteration {iterations+1}: Generating {count} samples, {num_samples - count} more needed after filtering.")
+            how_many_to_sample = num_samples - count if count <= num_samples else 0
+            print(f"Iteration {iterations+1}: Generating {count} samples, {how_many_to_sample} more needed after filtering.")
             
-        # 5. Concatenate and trim to exact num_samples
+        # Concatenate and trim to exact num_samples
         X_num_out = np.concatenate(final_X_num, axis=0)[:num_samples] if final_X_num else None
         X_cat_out = np.concatenate(final_X_cat, axis=0)[:num_samples] if final_X_cat else None
         y_gen_out = np.concatenate(final_y, axis=0)[:num_samples]
             
         return X_num_out, X_cat_out, y_gen_out
 
-
+# ------------- End of sample generation functions ----------------------
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', metavar='FILE')
     
     group = parser.add_mutually_exclusive_group()  # privacy_approach_group
+    # without privacy loss, i.e. original TabDDPM training
     group.add_argument('--no_privacy', action='store_true', default=False)
+    # summation-based approach, with continuous state space, adaptive weights, gradient clipping, ...
+    group.add_argument('--adaptive_approach', action='store_true', default=False)  
+    # DCR-based approach, with continuous state space, adaptive weights determined by DCR metric, gradient clipping, ...
+    group.add_argument(
+        '--adaptive_single_metric',
+        nargs='?',             # This makes the value optional
+        const='dcr',           # Value used if flag is present but no choice is typed
+        default=None,          # Value used if the flag is missing entirely
+        choices=["dcr", "nndr", "gower"],
+        help="Toggle adaptive single metric mode. Default choice is dcr.",
+    )
+    
+    # -------- Depricated, abandoned approaches -----------------------
     group.add_argument('--vector_approach', action='store_true', default=False)
     group.add_argument('--weighted_vector', action='store_true', default=False)
     group.add_argument('--sum_approach', action='store_true', default=False)
     group.add_argument('--continuous_approach', action='store_true', default=False)
-    group.add_argument('--adaptive_approach', action='store_true', default=False)
-    group.add_argument(
-        '--adaptive_single_metric',
-        choices=["dcr", "nndr", "gower"],
-        help="Toggle adaptive single metric mode. Please specify which one to use.",
-    )
     group.add_argument(
         "--single_metric",
         dest="metric",
         choices=["dcr", "nndr", "gower"],
         help="Toggle single metric mode. Please specify which one to use.",
     )
+    # ------------------------------------------------------------------
+    
+    
+    # ------- Additional flags: train, sample, eval, filter ... --------
     parser.add_argument('--train', action='store_true', default=False)
     parser.add_argument('--sample', 
                         type=int,
@@ -1322,11 +1353,9 @@ def main():
     args = parser.parse_args()
     raw_config = lib.load_config(args.config)
     if 'device' in raw_config:
-        device = torch.device('cuda:0')  # Paul
-        # device = torch.device(raw_config['device'])  # Use specified device
+        device = torch.device(raw_config['device'])  # Use specified device
     else:
-        device = torch.device('cuda:0')  # Original 'cuda:1'
-    # assert "evaluation_file" in raw_config, "evaluation_file key missing in config.toml"
+        device = torch.device('cuda:0')  # Assuming only one GPU is available. Originally 'cuda:1'.
     print("Starting agent ...")
     agent = RLAgent(name="RLAgent1", args=args, raw_config=raw_config, device=device)
     X_num, X_cat, y_gen = None, None, None
@@ -1361,19 +1390,10 @@ def main():
 
         X_num, X_cat, y_gen = sample_method(num_samples=args.sample, value=args.filter_value, max_value=args.max_value)
         
-        """
-        if X_num is not None:
-            print(f"Generated samples: X_num shape {X_num.shape}") 
-        if X_cat is not None:    
-          print(f"Generated samples: X_cat shape {X_cat.shape}")
-        print(f"Generated samples: y_gen shape {y_gen.shape}")
-        
-        print(f"X_num type: {type(X_num)}, X_cat type: {type(X_cat)}, y_gen type: {type(y_gen)}")
-        """
     elapsed_time = time.time() - st    
     if args.eval and not args.train:
         
-        agent.evaluate_generation(elapsed_time=elapsed_time, X_num=X_num, X_cat=X_cat, y_gen=y_gen)
+        agent.eval_generation(elapsed_time=elapsed_time, X_num=X_num, X_cat=X_cat, y_gen=y_gen)
         
     
 if __name__ == '__main__':

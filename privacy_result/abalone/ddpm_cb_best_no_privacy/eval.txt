@@ -3,7 +3,7 @@ wasserstein_distance_numerical: 0.011428212763363746
 js_similarity_categorical: 0.9958671204629841
 correlation_pearson: 0.9645762594006596
 correlation_spearman: 0.9899971684943409
-dcr_all_euclidean: 0.06734169966731059
+dcr_euclidean: 0.06734169966731059
 nndr_euclidean: 0.8510496263603002
 nndr_cosine: 0.75437249719072
 gower_distance: 0.2243209775944666

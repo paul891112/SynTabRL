@@ -9,7 +9,7 @@ import math
 
 import numpy as np
 from .utils import *
-from .privacy import *  # Including Paul's Implementation
+from .privacy import *  # Including SynTabRL privacy loss function Implementation
 
 """
 Based in part on: https://github.com/lucidrains/denoising-diffusion-pytorch/blob/5989f4c77eafcdc6be0fb4739f0f277a6dd7f7d8/denoising_diffusion_pytorch/denoising_diffusion_pytorch.py#L281
@@ -638,9 +638,7 @@ class GaussianMultinomialDiffusion(torch.nn.Module):
         
         # Import PRIVACY_FUNCTIONS from privacy.py to compute different types of privacy losses
         if x_cat.shape[1] > 0:
-            loss_multi = self._multinomial_loss(model_out_cat, log_x_cat, log_x_cat_t, t, pt, out_dict) / len(self.num_classes)
-            # loss_privacy_cat = categorical_privacy_loss(log_x_cat, model_out_cat, len(self.num_classes), self.num_classes)
-            
+            loss_multi = self._multinomial_loss(model_out_cat, log_x_cat, log_x_cat_t, t, pt, out_dict) / len(self.num_classes)            
             loss_privacy_cat = PRIVACY_FUNCTIONS[f"{privacy_metric}_cat_loss"](log_x_cat, model_out_cat, len(self.num_classes), self.num_classes, weights=weight_mask)  # PRIVACY_FUNCTIONS return value already called .mean()
         
         if x_num.shape[1] > 0:

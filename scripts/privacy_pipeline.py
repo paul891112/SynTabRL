@@ -47,8 +47,7 @@ def main():
     if 'evaluation_file' not in raw_config:
         raw_config['evaluation_file'] = "evaluate_privacy.txt"
     if 'device' in raw_config:
-        device = torch.device('cuda:0')  # Paul
-        # device = torch.device(raw_config['device'])  # Use specified device
+        device = torch.device(raw_config['device'])  # Use specified device
     else:
         device = torch.device('cuda:0')  # Original 'cuda:1'
     

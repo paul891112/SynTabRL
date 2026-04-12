@@ -21,10 +21,11 @@ from datasetinfo import generate_dataset_info
 
 def get_model_pipeline(args):
     lookup = {
-    'ctgan': ['python3.9', 'CTGAN/CTGAN/ctgan/__main__.py', '--config', f'{args.config}', '--train', '--sample', '--eval'],
+    'ctgan': ['python3.9', 'scripts/pipeline_ctgan.py', '--config', f'{args.config}', '--train', '--eval'],  # CTGAN sampling is included in model training, no --sample flag needed
     'ctabgan': ['python3.9', 'CTAB-GAN-Plus/pipeline_ctabganp.py', '--config', f'{args.config}', '--train', '--sample', '--eval'],
     'tvae': ['python3.9', 'CTGAN/pipeline_tvae.py', '--config', f'{args.config}', '--train', '--sample', '--eval'],
-    'smote': ['python3.9', 'smote/pipeline_smote.py', '--config', f'{args.config}', '--sample', '--eval']
+    'smote': ['python3.9', 'smote/pipeline_smote.py', '--config', f'{args.config}', '--sample', '--eval'],
+    'tabddpm': ['python3.9', 'scripts/pipeline.py', '--config', f'{args.config}', '--train', '--sample', '--eval']
     }
     
     return lookup[args.model]
@@ -33,7 +34,7 @@ def get_model_pipeline(args):
 def main():
     
     parser = argparse.ArgumentParser()    
-    parser.add_argument('--model', choices=['ctgan', 'ctabgan', 'tvae', 'smote'], required=True)
+    parser.add_argument('--model', choices=['ctgan', 'ctabgan', 'tvae', 'smote', 'tabddpm'], required=True)
     parser.add_argument('--config', metavar='FILE')
     
     args = parser.parse_args()
@@ -49,7 +50,6 @@ def main():
     subprocess.run(pipeline, check=True)
     
     # Evaluate privacy, adopted from evaluate_privacy.py, evaluate_privacy_main()
-    
     x_real, x_fake, target_size, task_type = load_data(raw_config['real_data_path'], raw_config['parent_dir'])
     
     real_data_path = os.path.normpath(raw_config['real_data_path'])
@@ -64,6 +64,10 @@ def main():
     print(f"Dataset_info: {dataset_info}\nnum_numerical_features: {N}\ntask_type: {task_type}\ncategory_sizes: {dataset_info['category_sizes']}")
     print(f"x_real shape: {x_real.shape}, x_fake shape: {x_fake.shape}")
     stats, scores = evaluate_generation(x_real, x_fake, N, dataset_info["category_sizes"], task_type=task_type)
+    
+    checkpoint_path = os.path.join(raw_config['parent_dir'], 'checkpoint')
+    if os.path.exists(checkpoint_path):
+        shutil.rmtree(checkpoint_path)
     
     with open(os.path.join(parent_dir, 'SynTabRL_evaluation.txt'), 'w') as file:
         
@@ -83,31 +87,6 @@ def main():
         minutes, seconds = divmod(elapsed_time, 60)
         file.write(f"\nTotal training, sampling and evaluation time: {int(minutes)} min {seconds:.2f} sec\n")
 
-
-def main_debug():
-    
-    parser = argparse.ArgumentParser()    
-    parser.add_argument('--model', choices=['ctgan', 'ctabgan', 'tvae', 'smote'], required=True)
-    parser.add_argument('--config', metavar='FILE')
-    
-    args = parser.parse_args()
-    print(f"Using config file: {args.config}")
-    print(f"Using model: {args.model}")
-    raw_config = lib.load_config(args.config)
-    
-    dataset_info = generate_dataset_info(real_data_path=raw_config['real_data_path'])  # generates DatasetInfo and saves to dataset_info folder if not already exists
-    pipeline = get_model_pipeline(args)
-    st = time.time()
-
-    # Train and sample the model
-    # subprocess.run(pipeline, check=True)
-    
-    # Evaluate privacy, adopted from evaluate_privacy.py, evaluate_privacy_main()
-    
-    x_real, x_fake, target_size, task_type = load_data(raw_config['real_data_path'], raw_config['parent_dir'])
-    
-    
-    
            
 if __name__ == '__main__':
     main()

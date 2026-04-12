@@ -29,6 +29,8 @@ from scipy.stats import wasserstein_distance
 from enum import Enum
 import time
 
+# Prototype Actor-Critic RL agent for training TabDDPM with privacy-aware rewards.
+# Not fully implemented yet, but the structure is in place for future development.
 
 PRIVACY_CONFIG_DICT = {
     "dcr": 0.3,  # the higher, the better privacy, but the lower fidelity

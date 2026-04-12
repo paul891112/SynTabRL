@@ -36,8 +36,7 @@ def main():
     args = parser.parse_args()
     raw_config = lib.load_config(args.config)
     if 'device' in raw_config:
-        device = torch.device('cuda:0')  # Paul
-        # device = torch.device(raw_config['device'])  # Use specified device
+        device = torch.device(raw_config['device'])  # Use specified device
     else:
         device = torch.device('cuda:0')  # Original 'cuda:1'
     
