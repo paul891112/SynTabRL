@@ -28,8 +28,11 @@ import gc
 from datasetinfo import generate_dataset_info
 
 
+"""
+Script to evaluate the value added by filtering out risky samples in post-processing.
+"""
+
 def main():
-    
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', metavar='FILE')
     parser.add_argument('--num_sample', 
@@ -65,8 +68,7 @@ def main():
         args.num_sample = raw_config['sample']['num_samples']  # Will be set to default in the agent if not provided
 
     if 'device' in raw_config:
-        device = torch.device('cuda:0')  # Paul
-        # device = torch.device(raw_config['device'])  # Use specified device
+        device = torch.device(raw_config['device'])  # Use specified device
     else:
         device = torch.device('cuda:0')  # Original 'cuda:1'
 

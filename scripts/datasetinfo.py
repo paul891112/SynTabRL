@@ -31,6 +31,12 @@ class DatasetInfo:
 
 
 def generate_dataset_info(real_data_path, change_val=False):
+    """
+    Generates and saves dataset information such as category sizes and number of numerical features.
+    If the information already exists, it loads and returns it instead.
+    Adds additional information to RLAgent for training.
+    """
+    
     dataset_name = os.path.basename(os.path.normpath(real_data_path))
     config = lib.load_config(os.path.join("exp", dataset_name, "config.toml"))
 
@@ -43,7 +49,6 @@ def generate_dataset_info(real_data_path, change_val=False):
     
     real_data_path = os.path.normpath(real_data_path)
     parent_dir = os.path.normpath(parent_dir)
-    # info_json_path = os.path.join(parent_dir, 'DatasetInfo.json')
     datasetinfo_path = os.path.join(DATASETINFO_DIR, os.path.basename(real_data_path), 'DatasetInfo.json')
 
     if os.path.exists(datasetinfo_path):
@@ -76,11 +81,12 @@ def generate_dataset_info(real_data_path, change_val=False):
         # Add any other relevant metrics or parameters here
     }
     
-    # D. Save the updated dictionary back to the file (overwriting)
+    # Save the updated dictionary back to the file (overwriting)
     # lib.dump_json(new_info, info_json_path)
     if not os.path.exists(os.path.join(DATASETINFO_DIR, dataset_name)):
         os.makedirs(os.path.join(DATASETINFO_DIR, dataset_name))
     lib.dump_json(new_info, datasetinfo_path)
+    
     return new_info
     
 

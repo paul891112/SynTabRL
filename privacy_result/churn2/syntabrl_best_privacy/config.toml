@@ -3,7 +3,7 @@ parent_dir = "privacy_result/churn2/syntabrl_best_privacy"
 real_data_path = "data/churn2/"
 model_type = "mlp"
 num_numerical_features = 7
-device = "cuda:1"
+device = "cuda:0"
 
 [model_params]
 num_classes = 2

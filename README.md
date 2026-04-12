@@ -1,5 +1,5 @@
 # SynTabRL: TabDDPM with RL Agent for Privacy-Aware Synthetic Tabular Data Generation
-This is an adaptation from the official TabDDPM project "TabDDPM: Modelling Tabular Data with Diffusion Models" ([paper](https://arxiv.org/abs/2209.15421)). This project implements a RL agent to improve model output on privacy metrics. 
+This repository contains source code of the bachelor thesis "Multi-Objective Optimization Framework for Privacy-Preserving Tabular Data Synthesis", done at Communication System Group, University of Zurich, supervised by Mr. Weijie Niu, Mr. Chao Feng and Prof. Dr. Burkhard Stiller. It is an adaptation from the official TabDDPM project "TabDDPM: Modelling Tabular Data with Diffusion Models" ([paper](https://arxiv.org/abs/2209.15421)). This project implements a RL agent to improve diffusion model output on privacy metrics. 
 
 <!-- ## Results
 You can view all the results and build your own tables with this [notebook](notebooks/Reports.ipynb). -->
@@ -25,10 +25,26 @@ You can view all the results and build your own tables with this [notebook](note
     conda activate tddpm
     ```
 
+3. The tddpm virtual environment reports package dependency conflicts when trying to run CTGAN benchmark experiments. To resolve this issue, follow the following steps to install an other virtual environment to run CTGAN benchmark experiments.
+
+    ```bash
+    conda create -n sdv_env python=3.9.7
+    conda activate sdv_env
+
+    pip install -r requirements_sdv.txt
+
+    # if the following commands do not succeed, update conda
+    conda env config vars set PYTHONPATH=${PYTHONPATH}:${REPO_DIR}
+    conda env config vars set PROJECT_DIR=${REPO_DIR}
+
+    conda deactivate
+    conda activate sdv_env
+
+    ```
+
 ## Running the experiments
 
-Here we describe the neccesary info for reproducing the experimental results.  
-Use `agg_results.ipynb` to print results of the original TabDDPM for all dataset and all methods.
+Here we describe the neccesary info for reproducing the experimental results.
 
 ### Datasets
 
@@ -50,7 +66,7 @@ To load the additional three datasets that are used to conduct SynTabRL evaluati
 
 
 ### File structure
-`tab-ddpm/` -- implementation of the proposed method  
+`tab_ddpm/` -- implementation of the proposed method  
 `tuned_models/` -- tuned hyperparameters of evaluation model (CatBoost or MLP)
 `scripts/train.py`-- contains additional logic to handle privacy-preserving loss functions
 `dataset_info/` -- metadata on datasets, used in rlagent.py
@@ -58,6 +74,7 @@ To load the additional three datasets that are used to conduct SynTabRL evaluati
 All main scripts are in `scripts/` folder:
 
 - `scripts/rlagent.py` initiates a RL agent that trains, samples and evaluates modified TabDDPM
+- `scripts/benchmark.py` runs benchmark comparison  with other baseline models
 - `scripts/pipeline.py` are used to train, sample and eval TabDDPM using a given config  
 - `scripts/tune_ddpm.py` -- tune hyperparameters of TabDDPM
 - `scripts/eval_[catboost|mlp|simple].py` -- evaluate synthetic data using a tuned evaluation model or simple models
@@ -80,7 +97,7 @@ To understand the structure of `config.toml` file, read `CONFIG_DESCRIPTION.md`.
 
 Baselines:
 - `smote/`
-- `CTGAN/` -- TVAE [official repo](https://github.com/sdv-dev/CTGAN)
+- `CTGAN/` -- TVAE [official repo](https://github.com/sdv-dev/CTGAN), SDV library with CTGAN API [official documentation](https://docs.sdv.dev/sdv/single-table-data/modeling/synthesizers/ctgansynthesizer)
 - `CTAB-GAN/` --  [official repo](https://github.com/Team-TUD/CTAB-GAN)
 - `CTAB-GAN-Plus/` -- [official repo](https://github.com/Team-TUD/CTAB-GAN-Plus)
 
@@ -95,27 +112,18 @@ python scripts/tune_SynTabRL.py churn2 6500 synthetic catboost ddpm_tune --eval_
 ```
 
 
-<ins>Run TabDDPM tuning.</ins>   
-
-Template and example (`--eval_seeds` is optional): 
-```bash
-python scripts/tune_ddpm.py [ds_name] [train_size] synthetic [catboost|mlp] [exp_name] --eval_seeds
-python scripts/tune_ddpm.py churn2 6500 synthetic catboost ddpm_tune --eval_seeds
-```
-
-
 <ins>Run SynTabRL pipeline.</ins>   
 
 Template and example, --config flag must be provided; If --train is set, --APPROACH must be provided as well: 
 ```bash
 python scripts/rlagent.py --config [path_to_your_config] --APPROACH --train --sample --eval
-python scripts/rlagent.py --config privacy_result/churn2/syntabrl_privacy_best/config.toml --adaptive_approach --train --sample --eval
+python scripts/rlagent.py --config privacy_result/churn2/syntabrl_best_privacy/config.toml --adaptive_approach --train --sample --eval
 ```
 
-When using one of the single privacy loss term, also specify the loss term you want to use [dcr|nndr|gower]:
+When using the single privacy loss approach, it is possible to specify the loss term you want to use [dcr|nndr|gower], [dcr] by default:
 
 ```bash
-python scripts/rlagent.py --config privacy_result/churn2/syntabrl_privacy_best/config.toml --adaptive_single_metric dcr --train --sample --eval
+python scripts/rlagent.py --config privacy_result/churn2/syntabrl_best_privacy/config.toml --adaptive_single_metric dcr --train --sample --eval
 ```
 
 The pipeline includes optional privacy-enhancing sampling in a post-processing setting. Follow the following template and example:
@@ -124,26 +132,31 @@ The pipeline includes optional privacy-enhancing sampling in a post-processing s
 python scripts/rlagent.py --config [path_to_your_config] --sample --filter [percentile | threshold] --filter_value FLOAT (--max_value FLOAT)
 
 # discard top 10% risky samples
-python scripts/rlagent.py --config privacy_result/churn2/syntabrl_privacy_best/config.toml --sample --filter percentile --filter_value 0.1
+python scripts/rlagent.py --config privacy_result/churn2/syntabrl_best_privacy/config.toml --sample --filter percentile --filter_value 0.1
 
 # discard all samples with DCR value below the provided threshold, optionally discard samples above a maximum value.
-python scripts/rlagent.py --config privacy_result/churn2/syntabrl_privacy_best/config.toml --sample --filter threshold --filter_value 0.17 (--max_value 1.5)
+python scripts/rlagent.py --config privacy_result/churn2/syntabrl_best_privacy/config.toml --sample --filter threshold --filter_value 0.17 (--max_value 1.5)
 ```
 
-<ins>Run TabDDPM pipeline.</ins>   
+<ins>Run benchmark experiments.</ins>
 
-Template and example  (`--train`, `--sample`, `--eval` are optional): 
+To run experiments with other baseline models, use script/benckmark.py and speficy the model [smote|ctabgan|ctgan|tvae|tabddpm] and the config path. The following are some working examples:
+
 ```bash
-python scripts/pipeline.py --config [path_to_your_config] --train --sample --eval
-python scripts/pipeline.py --config exp/churn2/ddpm_cb_best/config.toml --train --sample
+python scripts/benchmark.py --model smote --config exp/churn2/smote/config.toml 
+
+python scripts/benchmark.py --model tabddpm --config exp/churn2/ddpm_cb_best/config.toml 
 ```
-It takes approximately 7min to run the script above (NVIDIA GeForce RTX 2080 Ti).  
 
-<ins>Run TabDDPM evaluation over seeds</ins>   
-Before running evaluation, you have to train the model with the given hyperparameters (the example above).  
+In order to run benchmark experiments with CTGAN, deactivate tddpm environment and activate sdv_env environment, then call scripts/benchmark.py as suggested above.
 
-Template and example: 
 ```bash
-python scripts/eval_seeds.py --config [path_to_your_config] [n_eval_seeds] [ddpm|smote|ctabgan|ctabgan-plus|tvae] synthetic [catboost|mlp] [n_sample_seeds]
-python scripts/eval_seeds.py --config exp/churn2/ddpm_cb_best/config.toml 10 ddpm synthetic catboost 5
+(tddpm)
+conda deactivate tddpm
+conda activate sdv_env
+
+python scripts/benchmark.py --model ctgan --config exp/churn2/ctgan/config.toml 
 ```
+
+
+

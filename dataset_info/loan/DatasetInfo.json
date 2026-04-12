@@ -3,6 +3,7 @@
     "n_classes": null,
     "n_num_features": 8,
     "n_cat_features": 5,
+    "training_completed": true,
     "category_sizes": [
         2,
         5,
