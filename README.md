@@ -48,7 +48,7 @@ Here we describe the neccesary info for reproducing the experimental results.
 
 ### Datasets
 
-The original paper uploads the datasets used with their custom train/val/test splits (link below). 
+The original TabDDPM paper uploads the datasets used with their custom train/val/test splits (link below). 
 
 To load the datasets, use the following commands: 
 
