@@ -204,6 +204,14 @@ class RLAgent:
         """
         Adopted from tab-ddpm/scripts/resample_privacy.py, which inturns is adapted from https://github.com/Team-TUD/CTAB-GAN/tree/main/model/eval
         
+        Args:            
+            X_num_fake (np.ndarray): Numerical synthetic data generated from TabDDPM model. Numpy format.
+            X_cat_fake (np.ndarray or None): Categorical synthetic data generated from TabDDPM model. Numpy format. Can be None if no categorical features.
+            y_gen (np.ndarray): Target variable of synthetic data y generated from TabDDPM model. Numpy format.
+            for_training (bool, optional): Flag to indicate if the synthetic data is being loaded for training or postprocessing. Defaults to True.
+            
+        Returns:
+            X_fake (np.ndarray): Preprocessed feature matrix of the synthetic dataset.
         """
         fake_path = self.raw_config['parent_dir']
         if for_training:
@@ -266,6 +274,7 @@ class RLAgent:
     def pretrain(self, steps=None):
         """
         Before incorporating privacy, train the model using conventional tabddpm training script.
+        If steps is specified, train for that many steps, otherwise train for self.steps_per_round steps, which is the default number of steps for each training round.
         """
         if steps:
             train_result = train(
@@ -352,6 +361,9 @@ class RLAgent:
     def _get_execution_strategy(self):
         """
         Maps configuration flags to the appropriate internal training method.
+        
+        Returns:
+            function: The method corresponding to the selected training approach.
         """
         # Active Approaches
         if self.args.adaptive_approach:
@@ -386,6 +398,15 @@ class RLAgent:
         The proposed summation-based approach of SynTabRL. Use DCR, NNDR, Gower's DCR as privacy learning signal.
         Continuous state space, adaptive weights based on current privacy evaluation and training progress. 
         Gradient Clipping is included to avoid overaggressive diffusion model parameter updates.
+        
+        Args:
+            X_num (np.ndarray): Numerical features of synthetic data generated from TabDDPM model. Numpy format.
+            X_cat (np.ndarray or None): Categorical features of synthetic data generated from TabDDPM model. Numpy format. Can be None if no categorical features.
+            y_gen (np.ndarray): Target variable of synthetic data y generated from TabDDPM model. Numpy format.
+            counter (int): Current round number, used for logging purposes.
+            
+        Returns:
+            train_result (pd.DataFrame): Training results of the current round, including loss values and privacy evaluation metrics.
         """        
         self.__state = self.evaluate_state_continuous(X_num, X_cat, y_gen)
         print(f"=== RL Agent Round {counter} ===")
@@ -395,7 +416,21 @@ class RLAgent:
         return train_result
     
     
-    def _run_adaptive_single_metric(self, X_num, X_cat, y_gen, counter):    
+    def _run_adaptive_single_metric(self, X_num, X_cat, y_gen, counter):
+        """
+        The proposed adaptive approach on single metric. Similar to the adaptive approach, 
+        but only use a single privacy loss term as privacy learning signal. The applied privacy
+        loss term is specified by self.args.adaptive_single_metric.
+        
+        Args:
+            X_num (np.ndarray): Numerical features of synthetic data generated from TabDDPM model. Numpy format.
+            X_cat (np.ndarray or None): Categorical features of synthetic data generated from TabDDPM model. Numpy format. Can be None if no categorical features.
+            y_gen (np.ndarray): Target variable of synthetic data y generated from TabDDPM model. Numpy format.
+            counter (int): Current round number, used for logging purposes.
+        Returns:
+            train_result (pd.DataFrame): Training results of the current round, including loss values and privacy evaluation metrics.
+        """
+            
         single_metric = "adaptive_" + self.args.adaptive_single_metric
         self.__state = self.evaluate_state_continuous(X_num, X_cat, y_gen)
         print(f"=== RL Agent Round {counter} ===")
@@ -927,7 +962,12 @@ class RLAgent:
         
     def eval_generation(self, elapsed_time=None, X_num=None, X_cat=None, y_gen=None):
         """
-        Generates final evaluation of the trained model using available samples.
+        Final evaluation of the trained model using generated synthetic samples.
+        Args:
+            elapsed_time (float): Total training time in seconds, used for logging purposes.
+            X_num (np.ndarray or None): Numerical features of generated samples. None by default.
+            X_cat (np.ndarray or None): Categorical features of generated samples. None by default.
+            y_gen (np.ndarray or None): Target variable of generated samples. If None, will generate new samples for evaluation.
         """
         if y_gen is None:
             X_num, X_cat, y_gen = self.generate_samples(self.raw_config['sample']['num_samples'])
@@ -1011,6 +1051,12 @@ class RLAgent:
         Evaluates the privacy state of the model based on generated samples, if one of the privacy metrics
         is below threshold, return Low state, else High state. 
         I.e. Convert from State enum to LowHighState enum.
+        
+        Args:
+            X_num (np.ndarray): Numerical features of generated samples.
+            X_cat (np.ndarray): Categorical features of generated samples.
+            y_gen (np.ndarray): Generated target variable.
+            for_training (bool): Flag to indicate whether the evaluation is for training or postprocessing purposes. Default is True.
         """
         X_fake = self.load_fake_data(X_num, X_cat, y_gen, for_training=for_training)
         X_fake = np.asarray(X_fake)
@@ -1041,7 +1087,7 @@ class RLAgent:
             X_num (np.ndarray): Numerical features of generated samples.
             X_cat (np.ndarray): Categorical features of generated samples.
             y_gen (np.ndarray): Generated target variable.
-            K (list): Category sizes for categorical features.
+            single_metric (str): Privacy loss term to use as privacy training signal. Must be one of "dcr", "nndr", or "gower".
         Returns:
             State: The evaluated privacy state (HIGH or LOW).
         """
@@ -1125,7 +1171,17 @@ class RLAgent:
     
         
     def generate_samples(self, num_samples=5000, seed_offset=0, **kwargs):
-        """Generates samples using the current model and configuration. 5000 by default"""
+        """
+        Generates samples using the current model and configuration. 
+        
+        Args:
+            num_samples (int): The number of samples to generate. 5000 by default.
+            seed_offset (int): An offset to add to the base seed for sample generation, to avoid regenerating the same samples. Default is 0.
+            
+        Returns:
+            tuple: A tuple containing the generated numerical features (X_num), categorical features (X_cat
+            and target variable (y_gen).
+        """
         num_samples = num_samples
         return sample(
             num_samples=num_samples,
@@ -1150,6 +1206,15 @@ class RLAgent:
         Optional filtering in post-processing.
         Filter out top x% least private generated samples based on Distance to Closest Record (DCR) metric.
         E.g. to filter out the 10% least private samples, set value = 0.1. If value is None, default to 0.1.
+        
+        Args:
+            num_samples (int): The number of samples to return after filtering.
+            value (float or None): The percentage of least private samples to filter out based on DCR. Must be between 0 and 1. If None, defaults to 0.1 (filter out the 10% least private samples).
+            evaluate_sample_file (bool): Whether or not to generate an evaluation file that compares synthetic data quality before and after filtering. If False, no evaluation will be written. Default is False.
+            
+    
+        Returns:
+            tuple: A tuple containing the filtered numerical features (X_num_filtered), categorical features (X_cat_filtered) and target variable (y_gen_filtered) of the generated samples.
         """
         
         assert value is None or (0 <= value <= 1), "In percentile approach, value must be between 0 and 1, representing the percentage of samples to filter out based on DCR."
@@ -1222,11 +1287,21 @@ class RLAgent:
         return X_num_filtered, X_cat_filtered, y_gen_filtered
     
     
-    def generate_and_filter_samples_threshold(self, num_samples, value, max_value):
+    def generate_and_filter_samples_threshold(self, num_samples, value=0.15, max_value=None, **kwargs):
         """
         Optional filtering in post-processing.
         Filter out generated samples that are below a certain DCR threshold. 
         E.g. to filter out samples with DCR < 0.15, set value = 0.15. If value is None, default to 0.15.
+        
+        
+        Args:
+            num_samples (int): The number of samples to return after filtering.
+            value (float or None): The DCR threshold to filter generated samples. Samples with DCR below this threshold will be filtered out. If None, defaults to 0.15.
+            max_value (float or None): An optional maximum DCR threshold. If provided, samples with DCR above this threshold will also be filtered out. 
+            If None, no upper bound filtering will be applied.
+
+        Returns:
+            tuple: A tuple containing the filtered numerical features (X_num_filtered), categorical features (X_cat_filtered) and target variable (y_gen_filtered) of the generated samples.
         """
         
         if value is None:

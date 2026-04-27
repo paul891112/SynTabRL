@@ -215,7 +215,7 @@ def compute_gower_cat(log_x_cat, model_out_cat, num_cat_features, category_sizes
                 D_cat_sum += D_cat_k
                 runner += size
 
-        # --- 3. Final Gower Distance Calculation ---
+        # --- Final Gower Distance Calculation ---
         G_matrix = D_cat_sum / num_cat_features
         
         # Hard min vs. soft min for smoother training and convergence
@@ -270,6 +270,8 @@ def dcr_num_loss(x_num, model_out_num, **kwargs):
     Args:
         x_num: input numerical data
         model_out_num: predicted numerical data
+    Returns:
+        torch.Tensor: minimum distance between synthetic and original data
     
     """
     

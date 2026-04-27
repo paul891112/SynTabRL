@@ -19,7 +19,7 @@ import math
 from datasetinfo import generate_dataset_info
 
 
-##### Post-training privacy evaluation functions. Idea and implementation are adapted from FEST Framework (https://github.com/CSG-AISym4MED/synprivutil). #####
+# Helper functions for post-training privacy evaluation. Idea and implementation are adapted from FEST Framework (https://github.com/CSG-AISym4MED/synprivutil).
 
 def load_data(real_path, fake_path):
     
@@ -27,6 +27,17 @@ def load_data(real_path, fake_path):
     Adopted from tab-ddpm/scripts/resample_privacy.py, which inturns is adapted from https://github.com/Team-TUD/CTAB-GAN/tree/main/model/eval
     
     Used in post-training privacy evaluation.
+    
+    Args:
+    - real_path (str): Path to the real dataset. real_data_path in config.toml. 
+    - fake_path (str): Path to the synthetic dataset. parent_dir in config.toml.
+    
+    Returns:    
+    - X_real (np.ndarray): The normalized real dataset, numpy format
+    - X_fake (np.ndarray): The normalized synthetic dataset, numpy format
+    - target_size (int): The number of classes alias the column size of target vector y for classification tasks (1 for regression).
+    - task_type (str): The type of task, either 'regression', 'binclass', or 'multiclass'.
+    
     """
     
     task_type = lib.load_json(real_path + "/info.json")["task_type"]
@@ -211,6 +222,9 @@ def compute_gowers_DCR(original: np.ndarray, synthetic: np.ndarray, num_numerica
     - num_numerical_features: int; The number of numerical features.
     - category_sizes: list; List containing the sizes of each categorical feature.
     - task_type: str; regression, binclass, multiclass
+    
+    Returns:
+    - float: The average minimum Gower's distance (DCR score).
     """
     G_matrix = compute_gowers_distance(original, synthetic, num_numerical_features, task_type, category_sizes, distance_metric)
     dcr_per_sample = np.min(G_matrix, axis=1)
@@ -642,6 +656,12 @@ def evaluate_generation(original: np.ndarray, synthetic: np.ndarray, num_numeric
         original: original dataset
         synthetic: fake, synthetic dataset
         N: number of numerical features
+        category_sizes: list of ints, each element represents the number of categories per feature.
+        task_type: str; regression, binclass or multiclass
+        
+    Returns:
+        dict: A dictionary containing similarity and privacy scores for the synthetic dataset.
+    
     """
     basic_stats = compute_basic_stats(original, synthetic)
     scores = {}
@@ -732,7 +752,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', metavar='FILE')
     parser.add_argument('--train', action='store_true', default=False)
-    parser.add_argument('--start_privacy_step', action='store_true',  default=-1)
+    parser.add_argument('--start_privacy_step', action='store_true', default=-1)
     parser.add_argument('--sample', action='store_true',  default=False)
     parser.add_argument('--eval', action='store_true',  default=False)
     parser.add_argument('--change_val', action='store_true',  default=False)
