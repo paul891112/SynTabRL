@@ -20,6 +20,11 @@ def is_privacy_vector(privacy_metric):
 ### Original train.py from TabDDPM, modified to include different privacy loss terms and gradient clipping. ###
 
 class Trainer:
+    
+    """
+    Trainer class, adapted from TabDDPM project: https://github.com/yandex-research/tab-ddpm/blob/main/scripts/train.py
+    Manages the training process. Keeps track of partially trained model state and manages the overall training.    
+    """
     def __init__(self, diffusion,  train_iter, lr, weight_decay, steps, device=torch.device('cuda:0'), optimizer=None, total_steps=None, max_norm=1.0):
         self.diffusion = diffusion
         self.ema_model = deepcopy(self.diffusion._denoise_fn)
@@ -86,6 +91,12 @@ class Trainer:
         """
         DCR privacy terms are bounded in [0, 1], set target to 1 for privacy and data similarity trade-off.
         Implemented in privacy.py, where 0 means identity and large value means perfect mismatch. Aim for privacy_loss = infinity.
+        
+        Args:
+            loss_multi: multinomial (categorical) loss without privacy term, from diffusion.mixed_loss(), in tab_ddpm/gaussian_multinomial_diffusion.py
+            loss_gauss: gaussian (numerical) loss without privacy term, from diffusion.mixed_loss()
+            privacy_multi: multinomial (categorical) privacy loss, from diffusion.mixed_loss()
+            privacy_gauss: gaussian (numerical) privacy loss, from diffusion.mixed_loss()
         """
         loss_multi = loss_multi +  torch.exp(-(self.diffusion.dcr_weight * privacy_multi)) if loss_multi != 0 else loss_multi  # aim for privacy ratio = 1
         loss_gauss = loss_gauss +  torch.exp(-(0.1 * self.diffusion.dcr_weight * privacy_gauss))  # aim for privacy ratio = 1        
@@ -243,7 +254,11 @@ class Trainer:
         Args:
             x: real data
             out_dict: yield from FastTensorDataLoader, in lib/data.py
+            privacy_metric: which privacy metric to use, one of PRIVACY_METRIC. Controls the specific implementation of the privacy loss function. Default is 'dcr'.
+            loss_memory: tuple of tensors to store loss values for privacy computation, only used for vector and adaptive approach. Defaults to None if not vector approach.
             weight_mask: torch tensor for vector and sum privacy approach. Defaults to None.
+        Returns:
+            tuple: categorical and numerical losses without privacy, as well as numerical and categorical privacy loss terms, and the final effectice total loss.
         """
         x = x.to(self.device)
         for k in out_dict:

@@ -17,7 +17,7 @@ DATASETINFO_DIR = "dataset_info"
 
 class DatasetInfo:
     """
-    Custom Class for information passing.
+    Custom Class for information passing in SynTabRL.
     Holds dataset information such as category sizes and number of numerical features.
     """
     def __init__(self, k, trainer):
@@ -35,6 +35,9 @@ def generate_dataset_info(real_data_path, change_val=False):
     Generates and saves dataset information such as category sizes and number of numerical features.
     If the information already exists, it loads and returns it instead.
     Adds additional information to RLAgent for training.
+    Args:
+        real_data_path (str): Path to the real dataset.
+        change_val (bool): change_val flag from CLI call. Default is False.
     """
     
     dataset_name = os.path.basename(os.path.normpath(real_data_path))
