@@ -64,6 +64,7 @@ class MetricsReport:
         return res
     
     def get_metrics(self) -> dict:
+        """Return ML efficiency evaluation metrics in a dictionary format."""
         res = {
             "val": {k: np.around(self._res["val"][k], 4) for k in self._res["val"]},
             "test": {k: np.around(self._res["test"][k], 4) for k in self._res["test"]}
