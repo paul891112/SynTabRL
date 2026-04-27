@@ -30,6 +30,7 @@ from enum import Enum
 import time
 
 # Prototype Actor-Critic RL agent for training TabDDPM with privacy-aware rewards.
+# Not used in SynTabRL project. 
 # Not fully implemented yet, but the structure is in place for future development.
 
 PRIVACY_CONFIG_DICT = {
