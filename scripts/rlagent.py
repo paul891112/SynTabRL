@@ -418,7 +418,7 @@ class RLAgent:
     
     def _run_adaptive_single_metric(self, X_num, X_cat, y_gen, counter):
         """
-        The proposed adaptive approach on single metric. Similar to the adaptive approach, 
+        The proposed single metric-based approach with DCR. Similar to the sum-based approach, 
         but only use a single privacy loss term as privacy learning signal. The applied privacy
         loss term is specified by self.args.adaptive_single_metric.
         
@@ -1000,7 +1000,7 @@ class RLAgent:
             X_num (np.ndarray): Numerical features of generated samples.
             X_cat (np.ndarray): Categorical features of generated samples.
             y_gen (np.ndarray): Generated target variable.
-            K (list): Category sizes for categorical features.
+            
         Returns:
             State: The evaluated privacy state (HIGH or LOW).
         
